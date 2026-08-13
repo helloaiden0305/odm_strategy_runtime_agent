@@ -38,11 +38,6 @@ document.querySelectorAll(".tab").forEach((t) => {
   });
 });
 
-function openTab(name) {
-  const tab = document.querySelector(`.tab[data-tab="${name}"]`);
-  if (tab) tab.click();
-}
-
 // ---------- 教学模式开关 ----------
 async function resetChat() {
   await post("/api/session/reset?session_id=" + SESSION);
@@ -318,8 +313,6 @@ async function refreshMetrics() {
   $("#m-hit").textContent = (m.kb_hit_rate * 100).toFixed(0) + "%";
 }
 
-$("#m-kb-card").addEventListener("click", () => openTab("samples"));
-
 // ---------- AI 归纳的排查策略总纲 ----------
 $("#summary-btn").addEventListener("click", async () => {
   $("#sum-text").value = "";
@@ -403,6 +396,16 @@ async function loadReview() {
 
 async function loadSamples() {
   const samples = await api("/api/playbook");
+  const counts = { taught: 0, refine: 0, ticket: 0 };
+  samples.forEach((s) => {
+    const source = s.source || "taught";
+    if (Object.prototype.hasOwnProperty.call(counts, source)) counts[source] += 1;
+  });
+  $("#sample-total").textContent = samples.length;
+  $("#sample-taught-total").textContent = counts.taught;
+  $("#sample-refine-total").textContent = counts.refine;
+  $("#sample-ticket-total").textContent = counts.ticket;
+
   const groups = {
     taught: { box: $("#samples-taught"), cnt: $("#cnt-taught") },
     refine: { box: $("#samples-refine"), cnt: $("#cnt-refine") },
@@ -415,7 +418,7 @@ async function loadSamples() {
   };
   Object.entries(groups).forEach(([key, g]) => {
     const items = samples.filter((s) => (s.source || "taught") === key);
-    g.cnt.textContent = items.length;
+    g.cnt.textContent = counts[key];
     g.box.innerHTML = items.length ? "" : emptyHint[key];
     items.forEach((s) => g.box.appendChild(renderSampleCard(s)));
   });

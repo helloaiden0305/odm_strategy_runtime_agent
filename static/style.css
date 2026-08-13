@@ -146,10 +146,6 @@ main { padding: 18px 24px; }
   margin-left: auto; min-width: 22px; text-align: center; font-size: 12px; font-weight: 700;
   color: var(--primary-d); background: #e6efff; border-radius: 999px; padding: 1px 8px;
 }
-/* 可点击指标卡 */
-.metric.clickable { cursor: pointer; transition: background .15s, box-shadow .15s; }
-.metric.clickable:hover { background: #e6efff; box-shadow: 0 0 0 1px var(--primary) inset; }
-
 /* 知识库弹窗 */
 .modal-mask {
   display: none; position: fixed; inset: 0; z-index: 50;
@@ -198,6 +194,17 @@ main { padding: 18px 24px; }
 .taught-item .tn { font-size: 12px; color: var(--warn); margin-top: 2px; }
 
 /* 策略样本库管理卡片里的输入 */
+.sample-stats {
+  display: grid; grid-template-columns: 1.4fr repeat(3, 1fr); gap: 10px;
+  margin: 0 0 16px;
+}
+.sample-stat {
+  background: #f8fafc; border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 2px;
+}
+.sample-stat.primary { background: #eef6ff; border-color: #bfdbfe; }
+.sample-stat-num { font-size: 22px; font-weight: 800; color: var(--primary-d); }
+.sample-stat-label { font-size: 12px; color: #8a8f98; }
 .card .s-q { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .card .s-a, .card .s-n { width: 100%; min-height: 48px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 13px; resize: vertical; margin-bottom: 6px; font-family: inherit; }
 
@@ -237,6 +244,7 @@ main { padding: 18px 24px; }
 @media (max-width: 860px) {
   .topbar { flex-direction: column; align-items: flex-start; gap: 12px; }
   .metrics { flex-direction: column; }
+  .sample-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   main { padding: 14px; }
   .chat-wrap { grid-template-columns: 1fr; }
   .review-actions { justify-content: flex-start; }
