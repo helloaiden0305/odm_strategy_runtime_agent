@@ -1,0 +1,32 @@
+# 敏感配置（含 API Key，切勿提交）
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# 运行时数据（SQLite 数据库，本地自动生成）
+*.db
+*.sqlite
+data.db
+data_odm_demo.db
+
+# 本地日志 / 学习资料
+logs/
+*.log
+docs/
+项目9ODM改造PRD.md
+启动指南.md
+_smoke_test.py
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

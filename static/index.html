@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XZY ODM 问题排查策略自进化平台</title>
+  <link rel="stylesheet" href="/static/style.css?v=10" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">XZY ODM 问题排查策略平台 <span class="tag">Agent Loop · 专家教学 · 策略进化</span></div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="chat">策略验证</button>
+      <button class="tab" data-tab="review">策略后台</button>
+    </nav>
+  </header>
+
+  <!-- 指标看板 -->
+  <section class="metrics" id="metrics">
+    <div class="metric clickable" id="m-kb-card" title="点击查看策略样本库">
+      <span class="m-num" id="m-kb">-</span><span class="m-label">策略样本 🔎</span></div>
+    <div class="metric"><span class="m-num" id="m-chats">-</span><span class="m-label">问题诊断次数</span></div>
+    <div class="metric"><span class="m-num" id="m-handoff">-</span><span class="m-label">专家升级率</span></div>
+    <div class="metric"><span class="m-num" id="m-hit">-</span><span class="m-label">策略命中率</span></div>
+  </section>
+
+  <!-- 策略样本库快速查看弹窗 -->
+  <div class="modal-mask" id="kb-modal">
+    <div class="modal">
+      <div class="modal-head">
+        <span>策略样本库</span>
+        <button class="modal-close" id="kb-close">✕</button>
+      </div>
+      <div class="modal-body" id="kb-list"></div>
+    </div>
+  </div>
+
+  <!-- AI 归纳的排查策略总纲弹窗 -->
+  <div class="modal-mask" id="sum-modal">
+    <div class="modal">
+      <div class="modal-head">
+        <span>排查策略总纲 <span class="tag-mini">可编辑 · 重新归纳时保留改写并合并新样本</span></span>
+        <button class="modal-close" id="sum-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <textarea class="summary-edit" id="sum-text" placeholder="加载中…"></textarea>
+        <div class="settings-actions">
+          <button id="sum-save" class="btn-ok">保存改写</button>
+          <button id="sum-regen" class="btn-brain">↻ 重新归纳(合并新样本)</button>
+          <span class="settings-hint" id="sum-status"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 完整系统提示词弹窗(只读) -->
+  <div class="modal-mask" id="prompt-modal">
+    <div class="modal">
+      <div class="modal-head">
+        <span>完整系统提示词 <span class="tag-mini">技术流程 + 业务设定</span></span>
+        <button class="modal-close" id="prompt-close">✕</button>
+      </div>
+      <div class="modal-body"><pre class="prompt-text" id="prompt-text"></pre></div>
+    </div>
+  </div>
+
+  <main>
+    <!-- 对话页 -->
+    <section id="tab-chat" class="panel active">
+      <div class="chat-wrap">
+        <div class="chat-col">
+          <div class="mode-bar">
+            <label class="switch">
+              <input type="checkbox" id="teach-toggle" />
+              <span>专家教学模式</span>
+            </label>
+            <span class="mode-hint" id="mode-hint">策略验证:输入 ODM 问题,观察 Agent 如何调用策略、SOP、案例和升级工具。</span>
+          </div>
+
+          <div class="messages" id="messages"></div>
+
+          <!-- 策略验证输入 -->
+          <div class="composer" id="ask-box">
+            <input id="input" type="text" placeholder="输入 ODM 问题,例如:蓝牙耳机偶现连接失败,应该怎么排查?" autocomplete="off" />
+            <button id="send">发送</button>
+            <button id="reset" class="ghost" title="清空当前会话上下文">重置</button>
+          </div>
+
+          <!-- 教学输入 -->
+          <div class="teach-box" id="teach-box">
+            <div class="teach-title">录入专家排查经验(问题现象 + 排查路径 + 策略原因)</div>
+            <input id="t-question" type="text" placeholder="问题现象,例如:蓝牙耳机偶现连接失败" autocomplete="off" />
+            <textarea id="t-answer" placeholder="建议排查路径,例如:先确认复现频率、设备型号、固件版本、耳机型号和 bt_stack 日志…"></textarea>
+            <textarea id="t-note" placeholder="策略原因,例如:蓝牙问题不要直接判硬件,先补齐复现环境和协议栈证据"></textarea>
+            <button id="teach-btn">沉淀为策略样本</button>
+
+            <div class="taught-wrap">
+              <div class="taught-title">已沉淀策略样本 (<span id="taught-count">0</span>) · 避免重复</div>
+              <div class="taught-list" id="taught-list"></div>
+            </div>
+          </div>
+
+          <div class="quick" id="quick"></div>
+        </div>
+        <aside class="trace-col">
+          <div class="trace-title">Agent Loop 与工具调用轨迹</div>
+          <div class="trace" id="trace"><div class="trace-empty">发起一次策略验证,这里会显示 Agent 如何调用策略、SOP、案例和升级工具。</div></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- 后台页 -->
+    <section id="tab-review" class="panel">
+      <div class="review-actions">
+        <button id="summary-btn" class="btn-brain">查看排查策略总纲</button>
+        <button id="prompt-btn" class="btn-brain">查看完整系统提示词</button>
+      </div>
+
+      <!-- AI 业务设定:全局人设/语气/铁律,改完即时生效 -->
+      <div class="settings-panel">
+        <div class="settings-title">AI 业务设定 <span class="tag-mini">全局角色 + 铁律,注入系统提示词,保存即时生效</span></div>
+        <textarea id="directive" placeholder="加载中…"></textarea>
+        <div class="settings-actions">
+          <button id="save-directive" class="btn-ok">保存设定</button>
+          <span class="settings-hint">承载“证据不足先追问、疑似底层问题升级专家、事实来自 SOP/案例”等全局策略。</span>
+        </div>
+      </div>
+
+      <div class="backstage-tabs" role="tablist" aria-label="策略后台">
+        <button class="backstage-tab active" data-backstage-tab="tickets">待复盘工单</button>
+        <button class="backstage-tab" data-backstage-tab="assets">策略资产库</button>
+      </div>
+
+      <div class="backstage-panel active" id="backstage-tickets">
+        <div class="review-col">
+          <div class="review-head">
+            <h3>待复盘工单</h3>
+            <p>Agent 无法确认、证据不足或高风险问题会进入这里,等待测试专家复盘。</p>
+          </div>
+          <div id="tickets" class="cards"></div>
+        </div>
+      </div>
+
+      <div class="backstage-panel" id="backstage-assets">
+        <div class="review-col">
+          <div class="review-head">
+            <h3>策略资产库</h3>
+            <p>已沉淀的专家教学、专家纠错和工单复盘策略,用于归纳排查策略总纲。</p>
+          </div>
+          <div class="sample-group">
+            <div class="sample-group-head">专家教学 <span class="tag-mini">专家录入的排查经验</span> <span class="grp-count" id="cnt-taught">0</span></div>
+            <div id="samples-taught" class="cards"></div>
+          </div>
+          <div class="sample-group">
+            <div class="sample-group-head">专家纠错 <span class="tag-mini">修正 AI 错误判断后固化</span> <span class="grp-count" id="cnt-refine">0</span></div>
+            <div id="samples-refine" class="cards"></div>
+          </div>
+          <div class="sample-group">
+            <div class="sample-group-head">工单复盘 <span class="tag-mini">从升级工单复盘沉淀</span> <span class="grp-count" id="cnt-ticket">0</span></div>
+            <div id="samples-ticket" class="cards"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js?v=10"></script>
+</body>
+</html>
