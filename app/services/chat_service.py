@@ -1,5 +1,6 @@
 """策略验证服务:维护会话上下文、驱动 Agent Loop、记录指标。"""
 from __future__ import annotations
+import re
 from typing import Any
 
 from ..agent.loop import AgentLoop, LoopResult
@@ -10,6 +11,8 @@ from .. import config
 
 # 简单的进程内会话存储(演示用;生产可换 Redis/DB)
 _SESSIONS: dict[str, list[dict[str, Any]]] = {}
+_SESSION_CONTEXT: dict[str, dict[str, Any]] = {}
+_HANDOFF_TEXT_RE = re.compile(r"(升级测试专家|升级专家|判断不了|看不准|人工判断|转专家|专家)")
 
 
 def _build_provider() -> LLMProvider:
@@ -70,7 +73,13 @@ def handle_chat(message: str, session_id: str = "demo") -> LoopResult:
     # 会话存储只保留用户消息和最终回复。
     history = _SESSIONS.get(session_id, [])
 
-    result = _LOOP.run(message, history=history, system=effective_system_prompt())
+    handoff_context = _build_handoff_context(message, session_id)
+    result = _LOOP.run(
+        message,
+        history=history,
+        system=effective_system_prompt(),
+        handoff_context=handoff_context,
+    )
 
     # 只把用户与最终回复(不含中间的 tool_calls / tool 消息)落进会话上下文
     _SESSIONS[session_id] = [
@@ -80,7 +89,78 @@ def handle_chat(message: str, session_id: str = "demo") -> LoopResult:
     ]
 
     _log_metrics(session_id, message, result)
+    _remember_business_context(session_id, message, result)
     return result
+
+
+def _build_handoff_context(message: str, session_id: str) -> dict[str, Any] | None:
+    if not _HANDOFF_TEXT_RE.search(message):
+        return None
+    cached = _SESSION_CONTEXT.get(session_id)
+    if cached:
+        return {
+            "phenomenon": cached.get("phenomenon", ""),
+            "reason": "用户请求升级 / 证据不足 / 需要专家确认",
+            "attempted": cached.get("attempted", ""),
+            "missing": cached.get("missing", ""),
+            "session_summary": cached.get("session_summary", ""),
+        }
+    return {
+        "missing_phenomenon": True,
+        "phenomenon": "",
+        "reason": "缺少原始问题现象,需要专家先补充上下文。",
+        "attempted": "当前仅收到升级请求,尚未形成可复盘的排查链路。",
+        "missing": "需要补充问题现象、复现步骤、设备型号、固件版本、日志和影响范围。",
+        "session_summary": f"用户当前输入:{message}",
+    }
+
+
+def _remember_business_context(session_id: str, message: str, result: LoopResult) -> None:
+    if result.handoff or _HANDOFF_TEXT_RE.search(message):
+        return
+    tools = _summarize_tools(result.trace)
+    if not tools:
+        return
+    _SESSION_CONTEXT[session_id] = {
+        "phenomenon": message,
+        "attempted": tools,
+        "missing": _missing_evidence_hint(message),
+        "session_summary": "上一轮用户问题已完成策略验证,随后用户请求升级时可作为工单上下文。",
+    }
+
+
+def _summarize_tools(trace: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for step in trace:
+        if step.get("type") != "tool_result":
+            continue
+        tool = step.get("tool")
+        output = step.get("output") if isinstance(step.get("output"), dict) else {}
+        data = output.get("data") if isinstance(output.get("data"), dict) else {}
+        if tool == "recall_troubleshooting_strategy":
+            count = data.get("count", output.get("count", 0))
+            lines.append(f"recall_troubleshooting_strategy:召回策略样本 {count} 条。")
+        elif tool == "test_sop_search":
+            sop = data.get("sop") or output.get("sop")
+            if sop:
+                lines.append(f"test_sop_search:命中 {sop.get('name', '测试 SOP')}。")
+            else:
+                lines.append("test_sop_search:未命中足够明确的测试 SOP。")
+        elif tool == "defect_case_search":
+            count = data.get("count", output.get("count", 0))
+            lines.append(f"defect_case_search:检索历史缺陷 {count} 条。")
+    return "\n".join(lines)
+
+
+def _missing_evidence_hint(message: str) -> str:
+    lowered = message.lower()
+    if "蓝牙" in message or "bt_stack" in lowered:
+        return "缺少设备型号、固件版本、外设型号、bt_stack 日志、复现频率和影响范围。"
+    if "anr" in lowered or "卡死" in message:
+        return "缺少 bugreport、logcat、traces、复现脚本、CPU/内存曲线和版本信息。"
+    if "刷机" in message or "ota" in lowered:
+        return "缺少包版本、签名校验结果、失败码、升级日志、线材/端口和批次信息。"
+    return "缺少复现步骤、设备型号、固件版本、关键日志、影响范围和历史对比信息。"
 
 
 def _log_metrics(session_id: str, question: str, result: LoopResult) -> None:
@@ -94,6 +174,7 @@ def _log_metrics(session_id: str, question: str, result: LoopResult) -> None:
 
 def reset_session(session_id: str = "demo") -> None:
     _SESSIONS.pop(session_id, None)
+    _SESSION_CONTEXT.pop(session_id, None)
 
 
 def refine_reply(question: str, reply: str, feedback: str, session_id: str = "demo") -> str:

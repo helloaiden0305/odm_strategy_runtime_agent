@@ -52,9 +52,40 @@ class AgentLoop:
             return 1
         return 0
 
+    @staticmethod
+    def _enhance_handoff_input(payload: dict[str, Any],
+                               context: dict[str, Any] | None) -> dict[str, Any]:
+        """补齐升级工单复盘上下文,不改变工具本身的对外契约。"""
+        if not context:
+            return payload
+        enhanced = dict(payload)
+        phenomenon = (context.get("phenomenon") or "").strip()
+        reason = (context.get("reason") or enhanced.get("context") or "需要测试专家确认").strip()
+        attempted = (context.get("attempted") or "").strip()
+        missing = (context.get("missing") or "").strip()
+        session_summary = (context.get("session_summary") or "").strip()
+
+        if phenomenon:
+            enhanced["question"] = phenomenon
+        elif context.get("missing_phenomenon"):
+            reason = "缺少原始问题现象,需要专家先补充上下文。"
+
+        blocks = [
+            ("问题现象", enhanced.get("question", "")),
+            ("升级原因", reason),
+            ("已尝试", attempted),
+            ("缺失证据", missing),
+            ("当前会话摘要", session_summary),
+        ]
+        enhanced["context"] = "\n".join(
+            f"{title}:{value}" for title, value in blocks if value
+        )
+        return enhanced
+
     def run(self, user_message: str,
             history: list[dict[str, Any]] | None = None,
-            system: str | None = None) -> LoopResult:
+            system: str | None = None,
+            handoff_context: dict[str, Any] | None = None) -> LoopResult:
         messages: list[dict[str, Any]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -121,8 +152,10 @@ class AgentLoop:
                 input_valid = False
                 validation_error: dict[str, Any] | None = None
                 payload: dict[str, Any] = {}
+                tool_input = self._enhance_handoff_input(call.input or {}, handoff_context) \
+                    if call.name == "escalate_to_expert" else (call.input or {})
                 trace.append({"step": step, "type": "tool_call",
-                              "tool": call.name, "input": call.input,
+                              "tool": call.name, "input": tool_input,
                               "tool_exists": tool_exists,
                               "input_valid": None,
                               "result_ok": None,
@@ -137,7 +170,7 @@ class AgentLoop:
                             "meta": {},
                         }
                     else:
-                        input_valid, payload, validation_error = tool.validate_input(call.input or {})
+                        input_valid, payload, validation_error = tool.validate_input(tool_input)
                         if not input_valid:
                             result = tool.fail(
                                 validation_error["message"],
@@ -145,7 +178,7 @@ class AgentLoop:
                             )
                             trace.append({"step": step, "type": "tool_validation_error",
                                           "tool": call.name,
-                                          "input": call.input,
+                                          "input": tool_input,
                                           "tool_exists": tool_exists,
                                           "input_valid": input_valid,
                                           "error": validation_error})

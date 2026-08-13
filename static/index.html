@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>XZY ODM 问题排查策略自进化平台</title>
-  <link rel="stylesheet" href="/static/style.css?v=10" />
+  <link rel="stylesheet" href="/static/style.css?v=11" />
 </head>
 <body>
   <header class="topbar">
@@ -20,8 +20,16 @@
     <div class="metric clickable" id="m-kb-card" title="点击查看策略样本库">
       <span class="m-num" id="m-kb">-</span><span class="m-label">策略样本 🔎</span></div>
     <div class="metric"><span class="m-num" id="m-chats">-</span><span class="m-label">问题诊断次数</span></div>
-    <div class="metric"><span class="m-num" id="m-handoff">-</span><span class="m-label">专家升级率</span></div>
-    <div class="metric"><span class="m-num" id="m-hit">-</span><span class="m-label">策略命中率</span></div>
+    <div class="metric">
+      <span class="m-num" id="m-handoff">-</span>
+      <span class="m-label">专家升级率</span>
+      <span class="m-help">升级工单数 / 总诊断次数</span>
+    </div>
+    <div class="metric">
+      <span class="m-num" id="m-hit">-</span>
+      <span class="m-label">策略命中率</span>
+      <span class="m-help">命中策略且未升级 / 总诊断次数</span>
+    </div>
   </section>
 
   <!-- 策略样本库快速查看弹窗 -->
@@ -164,6 +172,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=10"></script>
+  <script src="/static/app.js?v=11"></script>
 </body>
 </html>

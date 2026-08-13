@@ -170,6 +170,33 @@ function openRefineBox(wrap, question, reply) {
   ta.focus();
 }
 
+function parseTicketContext(text) {
+  const data = {};
+  String(text || "").split(/\n+/).forEach((line) => {
+    const idx = line.indexOf(":");
+    if (idx <= 0) return;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (key && value) data[key] = value;
+  });
+  return data;
+}
+
+function renderTicketContext(t) {
+  const ctx = parseTicketContext(t.context);
+  const rows = [
+    ["升级原因", ctx["升级原因"]],
+    ["已尝试", ctx["已尝试"]],
+    ["缺失证据", ctx["缺失证据"]],
+  ].filter(([, value]) => value);
+  if (!rows.length && !t.context) return "";
+  const body = rows.length
+    ? rows.map(([label, value]) =>
+        `<div class="ticket-context-row"><span>${label}</span>${escapeHtml(value)}</div>`).join("")
+    : `<div class="ticket-context-row"><span>上下文</span>${escapeHtml(t.context)}</div>`;
+  return `<div class="ticket-context">${body}</div>`;
+}
+
 // 把一条内部 message 渲染成便于调试阅读的摘要行
 function fmtMessage(m) {
   const role = m.role || "?";
@@ -397,9 +424,12 @@ async function loadReview() {
   tickets.forEach((t) => {
     const c = document.createElement("div");
     c.className = "card";
+    const ctx = parseTicketContext(t.context);
+    const phenomenon = ctx["问题现象"] || t.question;
     c.innerHTML = `
-      <div class="q">${escapeHtml(t.question)}</div>
+      <div class="q">问题现象:${escapeHtml(phenomenon)}</div>
       <div class="meta">工单 #${t.id} · ${t.created_at}</div>
+      ${renderTicketContext(t)}
       <textarea placeholder="建议排查路径…"></textarea>
       <textarea placeholder="策略原因 / 触发条件(可选)…"></textarea>
       <div class="actions"><button class="btn-primary">复盘并入库</button></div>`;
