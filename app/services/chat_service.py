@@ -13,6 +13,9 @@ from .. import config
 _SESSIONS: dict[str, list[dict[str, Any]]] = {}
 _SESSION_CONTEXT: dict[str, dict[str, Any]] = {}
 _HANDOFF_TEXT_RE = re.compile(r"(升级测试专家|升级专家|判断不了|看不准|人工判断|转专家|专家)")
+_BUSINESS_SIGNAL_RE = re.compile(
+    r"(蓝牙|刷机|OTA|ota|ANR|anr|日志|logcat|bt_stack|traces|卡死|压测|固件|连接|失败|失败码)"
+)
 
 
 def _build_provider() -> LLMProvider:
@@ -104,6 +107,14 @@ def _build_handoff_context(message: str, session_id: str) -> dict[str, Any] | No
             "attempted": cached.get("attempted", ""),
             "missing": cached.get("missing", ""),
             "session_summary": cached.get("session_summary", ""),
+        }
+    if _BUSINESS_SIGNAL_RE.search(message):
+        return {
+            "phenomenon": message,
+            "reason": "用户请求升级 / 证据不足 / 需要专家确认",
+            "attempted": "当前问题直接请求升级,尚未完成更多工具交叉验证。",
+            "missing": _missing_evidence_hint(message),
+            "session_summary": f"用户带问题现象请求升级:{message}",
         }
     return {
         "missing_phenomenon": True,

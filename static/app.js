@@ -17,7 +17,7 @@ const QUICK = [
   "刷机失败一直卡在 20%,可能是什么原因?",
   "有没有类似 ANR 的历史缺陷案例?",
   "稳定性测试压测 2 小时后 App 卡死,下一步查什么?",
-  "这个问题我判断不了,帮我升级测试专家。",
+  "蓝牙连接失败但日志不完整,帮我升级测试专家。",
 ];
 
 function escapeHtml(s) {
@@ -33,19 +33,15 @@ document.querySelectorAll(".tab").forEach((t) => {
     t.classList.add("active");
     $("#tab-" + t.dataset.tab).classList.add("active");
     if (t.dataset.tab === "review") loadReview();
+    if (t.dataset.tab === "samples") loadSamples();
     refreshMetrics();
   });
 });
 
-document.querySelectorAll(".backstage-tab").forEach((t) => {
-  t.addEventListener("click", () => {
-    document.querySelectorAll(".backstage-tab").forEach((x) => x.classList.remove("active"));
-    document.querySelectorAll(".backstage-panel").forEach((x) => x.classList.remove("active"));
-    t.classList.add("active");
-    $("#backstage-" + t.dataset.backstageTab).classList.add("active");
-    loadReview();
-  });
-});
+function openTab(name) {
+  const tab = document.querySelector(`.tab[data-tab="${name}"]`);
+  if (tab) tab.click();
+}
 
 // ---------- 教学模式开关 ----------
 async function resetChat() {
@@ -322,46 +318,7 @@ async function refreshMetrics() {
   $("#m-hit").textContent = (m.kb_hit_rate * 100).toFixed(0) + "%";
 }
 
-// ---------- 策略样本库快速查看 ----------
-async function openKbModal() {
-  const list = await api("/api/playbook");
-  const box = $("#kb-list");
-  box.innerHTML = "";
-  if (!list.length) {
-    box.innerHTML = '<div class="empty">策略样本库还是空的,去「专家教学模式」录入第一条吧。</div>';
-    $("#kb-modal").classList.add("show");
-    return;
-  }
-  const groups = [
-    { key: "taught", title: "专家教学" },
-    { key: "refine", title: "专家纠错" },
-    { key: "ticket", title: "工单复盘" },
-  ];
-  groups.forEach((g) => {
-    const items = list.filter((k) => (k.source || "taught") === g.key);
-    if (!items.length) return;
-    const head = document.createElement("div");
-    head.className = "kb-group-head";
-    head.textContent = `${g.title}(${items.length})`;
-    box.appendChild(head);
-    items.forEach((k) => {
-      const c = document.createElement("div");
-      c.className = "kb-item";
-      c.innerHTML = `
-        <div class="q">${escapeHtml(k.question)}</div>
-        <div class="answer-box">${escapeHtml(k.answer)}</div>
-        ${k.note ? `<div class="note-box">策略原因:${escapeHtml(k.note)}</div>` : ""}
-        <div class="meta">#${k.id} · ${srcLabel(k.source)} · ${escapeHtml(k.created_at || "")}</div>`;
-      box.appendChild(c);
-    });
-  });
-  $("#kb-modal").classList.add("show");
-}
-$("#m-kb-card").addEventListener("click", openKbModal);
-$("#kb-close").addEventListener("click", () => $("#kb-modal").classList.remove("show"));
-$("#kb-modal").addEventListener("click", (e) => {
-  if (e.target.id === "kb-modal") $("#kb-modal").classList.remove("show");
-});
+$("#m-kb-card").addEventListener("click", () => openTab("samples"));
 
 // ---------- AI 归纳的排查策略总纲 ----------
 $("#summary-btn").addEventListener("click", async () => {
@@ -442,7 +399,9 @@ async function loadReview() {
     tbox.appendChild(c);
   });
 
-  // 策略样本库:按来源分开展示(专家教学 / 专家纠错 / 工单复盘)
+}
+
+async function loadSamples() {
   const samples = await api("/api/playbook");
   const groups = {
     taught: { box: $("#samples-taught"), cnt: $("#cnt-taught") },

@@ -5,11 +5,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "data_odm_demo.db")))
 STATIC_DIR = BASE_DIR / "static"
 
 # 从 .env 读取密钥等敏感配置(文件不存在时静默跳过)
 load_dotenv(BASE_DIR / ".env")
+
+DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "data_odm_demo.db")))
 
 # Agent Loop 边界控制
 MAX_LOOP_STEPS = 6          # 单次对话内最多循环步数,防死循环
@@ -22,6 +23,11 @@ KB_TOP_K = 3
 # 策略样本库(playbook)语义检索:每次只召回最相关的 top-k 条样本,避免全量塞爆上下文
 PLAYBOOK_TOP_K = int(os.getenv("PLAYBOOK_TOP_K", "5"))
 PLAYBOOK_SCORE_THRESHOLD = float(os.getenv("PLAYBOOK_SCORE_THRESHOLD", "0.3"))
+
+# GitHub Demo 默认每次启动清空运行态工单和指标,保留策略种子与设定。
+RESET_DEMO_RUNTIME_ON_START = os.getenv("RESET_DEMO_RUNTIME_ON_START", "true").lower() in {
+    "1", "true", "yes", "on"
+}
 
 # 选用的 LLM 提供方:mock(离线桩)| ark(真实豆包/火山引擎 ARK)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "mock")

@@ -4,12 +4,12 @@ import json
 from contextlib import contextmanager
 from typing import Iterator
 
-from .config import DB_PATH
+from . import config
 from .knowledge import embedder
 
 
 def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -109,6 +109,8 @@ def init_db() -> None:
             """
         )
         _ensure_odm_demo_samples(cur)
+        if config.RESET_DEMO_RUNTIME_ON_START:
+            _reset_demo_runtime(cur)
 
 
 _DEMO_PLAYBOOK = [
@@ -142,3 +144,9 @@ def _ensure_odm_demo_samples(cur: sqlite3.Cursor) -> None:
             "VALUES (?, ?, ?, 'taught', ?, ?)",
             (question, answer, note, json.dumps(vector), sig),
         )
+
+
+def _reset_demo_runtime(cur: sqlite3.Cursor) -> None:
+    """清理 Demo 运行态记录,保留 playbook/settings 等可复用策略资产。"""
+    cur.execute("DELETE FROM tickets")
+    cur.execute("DELETE FROM metrics_log")

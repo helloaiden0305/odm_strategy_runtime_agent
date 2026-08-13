@@ -28,7 +28,7 @@ body {
   font-size: 12px; font-weight: 400; margin-left: 8px;
   background: rgba(255,255,255,.14); padding: 3px 8px; border-radius: 999px;
 }
-.tabs { display: flex; gap: 8px; }
+.tabs { display: flex; gap: 8px; flex-wrap: wrap; }
 .tab {
   background: transparent; color: #cbd5e1; border: 1px solid transparent;
   padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 14px;
@@ -109,17 +109,6 @@ main { padding: 18px 24px; }
 .tstep pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-all; font-size: 12px; color: #334155; background: #f8fafc; padding: 6px; border-radius: 6px; }
 
 /* 策略后台 */
-.backstage-tabs {
-  display: inline-flex; gap: 6px; padding: 4px; margin: 0 0 12px;
-  background: #e2e8f0; border-radius: 10px;
-}
-.backstage-tab {
-  border: none; border-radius: 8px; padding: 8px 14px; background: transparent;
-  color: #475569; cursor: pointer; font-size: 13px; font-weight: 700;
-}
-.backstage-tab.active { background: #fff; color: var(--primary-d); box-shadow: 0 1px 2px rgba(15,23,42,.08); }
-.backstage-panel { display: none; }
-.backstage-panel.active { display: block; }
 .review-col { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-height: 60vh; }
 .review-head { margin-bottom: 14px; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
 .review-head h3 { margin: 0; font-size: 15px; }
@@ -157,13 +146,6 @@ main { padding: 18px 24px; }
   margin-left: auto; min-width: 22px; text-align: center; font-size: 12px; font-weight: 700;
   color: var(--primary-d); background: #e6efff; border-radius: 999px; padding: 1px 8px;
 }
-/* 弹窗内分组标题 */
-.kb-group-head {
-  font-size: 13px; font-weight: 700; color: #334155;
-  padding: 4px 0; border-bottom: 1px solid var(--line); margin-top: 4px;
-}
-.kb-group-head:first-child { margin-top: 0; }
-
 /* 可点击指标卡 */
 .metric.clickable { cursor: pointer; transition: background .15s, box-shadow .15s; }
 .metric.clickable:hover { background: #e6efff; box-shadow: 0 0 0 1px var(--primary) inset; }
@@ -258,7 +240,5 @@ main { padding: 18px 24px; }
   main { padding: 14px; }
   .chat-wrap { grid-template-columns: 1fr; }
   .review-actions { justify-content: flex-start; }
-  .backstage-tabs { display: flex; width: 100%; }
-  .backstage-tab { flex: 1; }
   .settings-actions, .card .actions, .msg-actions { flex-wrap: wrap; }
 }
