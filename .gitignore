@@ -21,6 +21,7 @@ data_odm_demo.db
 logs/
 *.log
 docs/
+demoPic/
 项目9ODM改造PRD.md
 启动指南.md
 _smoke_test.py
