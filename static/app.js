@@ -275,7 +275,7 @@ function fmtMessage(m) {
 }
 
 function tracePhase(item) {
-  if (["plan_created", "plan_invalid"].includes(item.type)) {
+  if (["planning", "plan_created", "plan_invalid"].includes(item.type)) {
     return { key: "plan", label: "规划" };
   }
   if (item.type === "plan_guard") {
@@ -316,6 +316,7 @@ function renderTrace(trace) {
     tool_result: "工具结果",
     final: "最终回复",
     plan_created: "执行计划",
+    planning: "正在规划",
     plan_invalid: "计划降级",
     plan_guard: "计划校验",
     plan_state: "步骤状态",
@@ -422,7 +423,7 @@ async function send() {
   renderRunControls();
   input.value = "";
   addMessage(text, "user");
-  renderTrace([{ step: 0, type: "think", content: "Agent 正在规划排查路径……" }]);
+  renderTrace([{ step: 0, type: "planning", content: "Agent 正在生成执行计划……" }]);
   try {
     const res = await post("/api/chat", {
       message: text,
