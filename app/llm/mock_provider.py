@@ -10,7 +10,7 @@ import re
 import time
 from typing import Any
 
-from .base import LLMProvider, LLMDecision, ToolCall
+from .base import AgentPlan, LLMProvider, LLMDecision, PlanStep, ToolCall
 from .. import config
 
 # 各类意图的关键词
@@ -49,10 +49,102 @@ def _tool_results_since_last_user(messages: list[dict[str, Any]]) -> dict[str, A
     return results
 
 
+def _offline_text_response(messages: list[dict[str, Any]]) -> LLMDecision:
+    """无工具场景的最小离线回复，覆盖总纲归纳与专家纠错演示。"""
+    latest = _last_user_message(messages)
+    if "策略样本" in latest:
+        samples = re.findall(
+            r"问题现象:(.*?)\n\s*建议排查路径:(.*?)\n\s*策略原因:(.*?)(?=\n\n\d+\. 问题现象:|\Z)",
+            latest,
+            re.S,
+        )
+        if samples:
+            rules = []
+            for index, (_, answer, reason) in enumerate(samples, start=1):
+                path = " ".join(answer.split())
+                note = " ".join(reason.split())
+                rules.append(f"{index}. {path}" + (f" 策略原因:{note}" if note else ""))
+            return LLMDecision(
+                type="final",
+                thought="根据专家样本归纳可复用的排查原则。",
+                content="\n".join(rules),
+            )
+    for message in reversed(messages):
+        if message.get("role") == "assistant" and message.get("content"):
+            return LLMDecision(
+                type="final",
+                thought="离线模式下保留已确认的排查建议。",
+                content=message["content"],
+            )
+    return LLMDecision(
+        type="final",
+        thought="离线模式下缺少可归纳的样本。",
+        content="请先补充问题现象、复现条件、版本和关键日志，再进入下一步排查。",
+    )
+
+
 class MockLLMProvider(LLMProvider):
+    def plan(self, messages: list[dict[str, Any]],
+             tools: list[dict[str, Any]]) -> AgentPlan:
+        question = _last_user_message(messages)
+        steps = [
+            PlanStep(
+                id="recall_strategy",
+                goal="确认已有专家策略是否可复用。",
+                allowed_tools=["recall_troubleshooting_strategy"],
+                required_evidence=["策略样本召回结果"],
+                exit_condition="已得到策略样本结果或确认未命中。",
+                fallback="进入补充证据或专家升级判断。",
+            ),
+        ]
+        evidence_gap = ["复现条件", "设备型号", "固件版本"]
+        if _HANDOFF_RE.search(question):
+            steps.append(PlanStep(
+                id="conclude_or_escalate",
+                goal="基于用户明确升级请求创建问题工单。",
+                allowed_tools=["escalate_to_expert"],
+                exit_condition="已创建专家工单或明确说明创建失败原因。",
+                fallback="明确说明待补充信息。",
+            ))
+        elif _SOP_RE.search(question):
+            steps.append(PlanStep(
+                id="collect_sop",
+                goal="核对测试 SOP、日志规范或标准排查步骤。",
+                allowed_tools=["test_sop_search"],
+                required_evidence=["测试 SOP 结果"],
+                exit_condition="已命中 SOP 或明确未命中。",
+                fallback="保留日志与环境待补充项。",
+            ))
+            evidence_gap.append("关键日志")
+        elif _CASE_RE.search(question):
+            steps.append(PlanStep(
+                id="collect_case",
+                goal="核对历史缺陷或类似问题处理记录。",
+                allowed_tools=["defect_case_search"],
+                required_evidence=["历史缺陷结果"],
+                exit_condition="已命中案例或明确未命中。",
+                fallback="保留历史对比待补充项。",
+            ))
+        if not _HANDOFF_RE.search(question):
+            steps.append(PlanStep(
+                id="conclude_or_escalate",
+                goal="基于已有证据输出建议、追问或升级测试专家。",
+                allowed_tools=["escalate_to_expert"],
+                exit_condition="完成受控结论、待补充说明或专家升级。",
+                fallback="明确说明当前无法确认的原因。",
+            ))
+        return AgentPlan(
+            goal="验证当前问题能否依据已有策略形成可执行的下一步。",
+            decision_reason="当前缺少完整环境与证据，需要先召回策略并按问题类型补齐依据。",
+            evidence_gap=evidence_gap,
+            steps=steps,
+        )
+
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMDecision:
         if config.MOCK_LLM_DELAY_SECONDS:
             time.sleep(config.MOCK_LLM_DELAY_SECONDS)
+        if not tools:
+            return _offline_text_response(messages)
         question = _last_user_message(messages)
         done = _tool_results_since_last_user(messages)
 

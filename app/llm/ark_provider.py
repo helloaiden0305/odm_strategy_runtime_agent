@@ -11,7 +11,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from .base import LLMProvider, LLMDecision, ToolCall
+from .base import AgentPlan, LLMProvider, LLMDecision, ToolCall
 from .. import config
 
 
@@ -23,6 +23,52 @@ class ArkLLMProvider(LLMProvider):
             raise RuntimeError("未配置 ARK_CHAT_MODEL,请在 .env 中填写豆包模型/接入点 ID。")
         self.client = OpenAI(api_key=config.ARK_API_KEY, base_url=config.ARK_BASE_URL)
         self.model = config.ARK_CHAT_MODEL
+
+    def plan(self, messages: list[dict[str, Any]],
+             tools: list[dict[str, Any]]) -> AgentPlan:
+        tool_names = [tool["name"] for tool in tools]
+        planner_prompt = (
+            "你是 ODM 问题排查运行时的 Planner。只输出一个 JSON 对象，不要 Markdown。"
+            "JSON 必须含 goal、decision_reason、evidence_gap、steps；steps 为 1 到 3 项，"
+            "每项含 id、goal、allowed_tools、required_evidence、exit_condition、fallback、status。"
+            "decision_reason 是一两句审计摘要，不是完整思维链。首步 allowed_tools 必须包含 "
+            "recall_troubleshooting_strategy；所有工具只能从以下名单选择："
+            + ", ".join(tool_names)
+        )
+        planner_messages = [{"role": "system", "content": planner_prompt}, *messages]
+        raw = self._plan_completion(planner_messages)
+        try:
+            return AgentPlan.from_dict(json.loads(raw))
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            retry_messages = [
+                *planner_messages,
+                {"role": "assistant", "content": raw},
+                {"role": "user", "content": (
+                    "刚才的输出无法解析为合规 JSON。请仅输出符合约定字段的 JSON 对象，"
+                    f"不要解释。解析错误：{exc}"
+                )},
+            ]
+            return AgentPlan.from_dict(json.loads(self._plan_completion(retry_messages)))
+
+    def _plan_completion(self, messages: list[dict[str, Any]]) -> str:
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=_to_openai_messages(messages),
+            temperature=0.1,
+        )
+        return (resp.choices[0].message.content or "").strip()
+
+    def replan(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]],
+               previous_plan: AgentPlan, reason: str) -> AgentPlan:
+        replan_messages = [
+            {"role": "system", "content": (
+                "这是一次受控重规划。只调整尚未完成的后续步骤，保留已获得的工具 Observation，"
+                "不要重复已完成步骤。重规划原因：" + reason
+            )},
+            {"role": "user", "content": "当前计划：" + json.dumps(previous_plan.to_dict(), ensure_ascii=False)},
+            *messages,
+        ]
+        return self.plan(replan_messages, tools)
 
     def chat(self, messages: list[dict[str, Any]],
              tools: list[dict[str, Any]]) -> LLMDecision:

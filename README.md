@@ -138,6 +138,22 @@ ARK_EMBED_MODEL=
 - **召回质量过滤**:`recall_troubleshooting_strategy` 按 `PLAYBOOK_SCORE_THRESHOLD` 过滤低相似度策略样本,并在 `meta` 中记录阈值、过滤前数量、过滤后数量和低置信度标记。
 - **路由护栏**:系统 Prompt 要求 SOP 类问题优先查 `test_sop_search`,历史缺陷类问题优先查 `defect_case_search`,风险或证据不足时升级测试专家。
 
+### 轻量 Plan-Execute-ReAct
+
+策略验证不是由模型拿到全部工具后自由发挥。每次运行先由 Planner 生成一份最多三步的结构化短计划，包含目标、决策摘要、证据缺口、允许工具、退出条件和兜底路径；`decision_reason` 是面向审计的简短摘要，不是模型完整思维链。
+
+```text
+Planner
+-> Plan Guard 校验首步策略召回、工具白名单和步骤结构
+-> Executor 在当前步骤仅暴露获准工具
+-> ReAct Loop 根据工具 Observation 继续决策
+-> Plan State 记录 completed / blocked / skipped
+-> 必要时最多一次 Replan
+-> Final Guard 校验证据门禁，未满足则升级测试专家
+```
+
+Plan、Guard、重规划和收尾校验均写入 Trace。重置、模式切换或新运行覆盖旧运行时，运行取消优先于上述全部阶段；被取消运行不会回写计划、会话、指标、上下文或工单。
+
 这些能力仍是 Demo 级护栏:适合展示 Agent Loop 和策略闭环,但还不是完整生产级治理系统。
 
 ## 生产级改造方向
@@ -193,7 +209,8 @@ flowchart TD
 
 ## 目录结构
 
-- `app/agent/loop.py` - Agent Loop 引擎与 trace 记录
+- `app/agent/loop.py` - Plan-Execute-ReAct 执行引擎与 trace 记录
+- `app/agent/plan.py` - 结构化计划、Plan Guard 与安全默认计划
 - `app/agent/tools/` - 策略召回、SOP 检索、缺陷案例、专家升级工具
 - `app/llm/` - LLM 抽象、Mock Provider、Ark Provider
 - `app/data/` - 脱敏 SOP 与历史缺陷案例模拟数据

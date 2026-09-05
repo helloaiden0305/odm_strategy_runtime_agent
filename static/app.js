@@ -288,6 +288,14 @@ function renderTrace(trace) {
     tool_call: "调用工具",
     tool_result: "工具结果",
     final: "最终回复",
+    plan_created: "执行计划",
+    plan_invalid: "计划降级",
+    plan_guard: "计划校验",
+    plan_state: "步骤状态",
+    replan: "重规划",
+    final_guard: "收尾校验",
+    guard_forced_finish: "受控兜底",
+    cancelled: "运行已中止",
   };
   trace.forEach((s) => {
     const el = document.createElement("div");
@@ -319,6 +327,31 @@ function renderTrace(trace) {
       }
     }
 
+    if (s.type === "plan_created" || s.type === "replan") {
+      const plan = s.plan || {};
+      if (plan.goal) inner += `<div class="sub">目标:${escapeHtml(plan.goal)}</div>`;
+      if (plan.decision_reason) inner += `<div class="sub">决策摘要:${escapeHtml(plan.decision_reason)}</div>`;
+      if (Array.isArray(plan.evidence_gap) && plan.evidence_gap.length) {
+        inner += `<div class="sub">待补证据:${escapeHtml(plan.evidence_gap.join("、"))}</div>`;
+      }
+      if (Array.isArray(plan.steps)) {
+        const steps = plan.steps.map((item) =>
+          `${item.id} [${item.status}]：${item.goal}`).join("\n");
+        inner += `<details><summary>查看计划步骤(${plan.steps.length} 项)</summary><pre>${escapeHtml(steps)}</pre></details>`;
+      }
+    }
+
+    if (s.type === "plan_guard" || s.type === "final_guard") {
+      inner += `<div class="sub">${s.ok ? "校验通过" : "校验未通过"}</div>`;
+      if (Array.isArray(s.reasons) && s.reasons.length) {
+        inner += `<pre>${escapeHtml(s.reasons.join("\n"))}</pre>`;
+      }
+    }
+
+    if (s.type === "plan_state") {
+      inner += `<div class="sub">${escapeHtml(s.plan_step || "步骤")} → ${escapeHtml(s.status || "unknown")}</div>`;
+    }
+
     if (s.type !== "llm_call" && s.type !== "llm_response" && s.content) {
       inner += `<div>${escapeHtml(s.content)}</div>`;
     }
@@ -326,6 +359,17 @@ function renderTrace(trace) {
     if (s.output) {
       inner += `<pre>出参 ${escapeHtml(JSON.stringify(s.output))}</pre>`;
       if (s.is_error) inner += `<div class="err-hint">工具返回错误 → Agent 将据此重新决策</div>`;
+    }
+    const governance = [
+      ["工具存在", s.tool_exists],
+      ["计划允许", s.plan_allowed],
+      ["入参有效", s.input_valid],
+      ["结果成功", s.result_ok],
+      ["结果数量", s.result_count],
+    ].filter(([, value]) => value !== undefined && value !== null);
+    if (governance.length) {
+      inner += `<div class="sub">治理:${governance.map(([key, value]) =>
+        `${key}=${escapeHtml(String(value))}`).join(" · ")}</div>`;
     }
     el.innerHTML = inner;
     box.appendChild(el);

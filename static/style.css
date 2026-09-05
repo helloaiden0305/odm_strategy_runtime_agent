@@ -101,6 +101,14 @@ main { padding: 18px 24px; }
 .tstep.llm_call .k { color: #7c3aed; }
 .tstep.llm_response { border-color: #a855f7; }
 .tstep.llm_response .k { color: #9333ea; }
+.tstep.plan_created, .tstep.replan { border-color: #0f766e; }
+.tstep.plan_created .k, .tstep.replan .k { color: #0f766e; }
+.tstep.plan_guard, .tstep.final_guard { border-color: #b45309; }
+.tstep.plan_guard .k, .tstep.final_guard .k { color: #b45309; }
+.tstep.plan_state { border-color: #2563eb; }
+.tstep.plan_state .k { color: #2563eb; }
+.tstep.guard_forced_finish { border-color: #dc2626; background: #fef2f2; }
+.tstep.guard_forced_finish .k { color: #dc2626; }
 .tstep.tool_result.error { border-color: #ef4444; background: #fef2f2; }
 .tstep.tool_result.error .k { color: #dc2626; }
 .tstep .sub { font-size: 12px; color: #475569; margin-top: 3px; }
