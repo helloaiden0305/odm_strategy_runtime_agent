@@ -85,6 +85,19 @@ main { padding: 18px 24px; }
 
 /* 轨迹 */
 .trace-title { font-weight: 600; margin-bottom: 10px; }
+.runtime-flow { display: flex; align-items: center; gap: 5px; padding: 8px 0 12px; overflow-x: auto; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.flow-stage { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; color: var(--muted); font-size: 11px; font-weight: 600; }
+.flow-dot { width: 7px; height: 7px; border-radius: 50%; background: #cbd5e1; flex: 0 0 auto; }
+.flow-link { width: 14px; height: 1px; background: #cbd5e1; flex: 0 0 auto; }
+.flow-stage.done { color: #0f766e; }
+.flow-stage.done .flow-dot { background: #0f766e; }
+.flow-stage.active { color: #2563eb; }
+.flow-stage.active .flow-dot { background: #2563eb; box-shadow: 0 0 0 3px #dbeafe; }
+.flow-stage.blocked { color: #b45309; }
+.flow-stage.blocked .flow-dot { background: #b45309; }
+.flow-stage.optional { color: #94a3b8; }
+.flow-stage.stopped { color: #dc2626; }
+.flow-stage.stopped .flow-dot { background: #dc2626; }
 .trace { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
 .trace-empty { color: var(--muted); font-size: 13px; }
 .tstep { border-left: 3px solid var(--line); padding: 6px 10px; font-size: 13px; background: #fbfdff; border-radius: 0 8px 8px 0; }

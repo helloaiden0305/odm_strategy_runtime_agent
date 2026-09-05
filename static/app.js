@@ -274,9 +274,34 @@ function fmtMessage(m) {
   return `[${role}] ${m.content || ""}`;
 }
 
+function renderRuntimeFlow(trace) {
+  const box = $("#runtime-flow");
+  const entries = trace || [];
+  const types = new Set(entries.map((item) => item.type));
+  const last = (type) => [...entries].reverse().find((item) => item.type === type);
+  const cancelled = types.has("cancelled");
+  const final = types.has("final") || types.has("guard_forced_finish");
+  const planGuard = last("plan_guard");
+  const finalGuard = last("final_guard");
+  const executing = types.has("llm_call") || types.has("tool_call") || types.has("plan_state");
+
+  const steps = [
+    { label: "规划", state: types.has("plan_created") ? "done" : (entries.length ? "active" : "waiting") },
+    { label: "计划校验", state: planGuard ? (planGuard.ok ? "done" : "blocked") : "waiting" },
+    { label: "受控执行", state: executing ? "done" : "waiting" },
+    { label: "重规划", state: types.has("replan") ? "done" : "optional" },
+    { label: "收尾", state: cancelled ? "stopped" : (final ? "done" : (finalGuard && !finalGuard.ok ? "blocked" : "waiting")) },
+  ];
+  box.innerHTML = steps.map((item, index) => {
+    const connector = index < steps.length - 1 ? '<span class="flow-link" aria-hidden="true"></span>' : "";
+    return `<div class="flow-stage ${item.state}"><span class="flow-dot"></span><span>${item.label}</span></div>${connector}`;
+  }).join("");
+}
+
 function renderTrace(trace) {
   const box = $("#trace");
   box.innerHTML = "";
+  renderRuntimeFlow(trace);
   if (!trace || !trace.length) {
     box.innerHTML = '<div class="trace-empty">暂无轨迹</div>';
     return;
