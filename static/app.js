@@ -274,34 +274,36 @@ function fmtMessage(m) {
   return `[${role}] ${m.content || ""}`;
 }
 
-function renderRuntimeFlow(trace) {
-  const box = $("#runtime-flow");
-  const entries = trace || [];
-  const types = new Set(entries.map((item) => item.type));
-  const last = (type) => [...entries].reverse().find((item) => item.type === type);
-  const cancelled = types.has("cancelled");
-  const final = types.has("final") || types.has("guard_forced_finish");
-  const planGuard = last("plan_guard");
-  const finalGuard = last("final_guard");
-  const executing = types.has("llm_call") || types.has("tool_call") || types.has("plan_state");
+function tracePhase(item) {
+  if (["plan_created", "plan_invalid"].includes(item.type)) {
+    return { key: "plan", label: "规划" };
+  }
+  if (item.type === "plan_guard") {
+    return { key: "plan_guard", label: "计划校验" };
+  }
+  if (["plan_state", "llm_call", "llm_response", "think", "tool_call", "tool_result"].includes(item.type)) {
+    return { key: "execute", label: "受控执行" };
+  }
+  if (item.type === "replan") {
+    const count = item.replan_count || 1;
+    return { key: `replan-${count}`, label: `重规划（第 ${count} 次）` };
+  }
+  if (["final_guard", "guard_forced_finish", "final", "cancelled"].includes(item.type)) {
+    return { key: "finish", label: "收尾校验" };
+  }
+  return null;
+}
 
-  const steps = [
-    { label: "规划", state: types.has("plan_created") ? "done" : (entries.length ? "active" : "waiting") },
-    { label: "计划校验", state: planGuard ? (planGuard.ok ? "done" : "blocked") : "waiting" },
-    { label: "受控执行", state: executing ? "done" : "waiting" },
-    { label: "重规划", state: types.has("replan") ? "done" : "optional" },
-    { label: "收尾", state: cancelled ? "stopped" : (final ? "done" : (finalGuard && !finalGuard.ok ? "blocked" : "waiting")) },
-  ];
-  box.innerHTML = steps.map((item, index) => {
-    const connector = index < steps.length - 1 ? '<span class="flow-link" aria-hidden="true"></span>' : "";
-    return `<div class="flow-stage ${item.state}"><span class="flow-dot"></span><span>${item.label}</span></div>${connector}`;
-  }).join("");
+function appendTracePhase(box, phase) {
+  const header = document.createElement("div");
+  header.className = "trace-phase";
+  header.innerHTML = `<span>阶段</span><strong>${escapeHtml(phase.label)}</strong>`;
+  box.appendChild(header);
 }
 
 function renderTrace(trace) {
   const box = $("#trace");
   box.innerHTML = "";
-  renderRuntimeFlow(trace);
   if (!trace || !trace.length) {
     box.innerHTML = '<div class="trace-empty">暂无轨迹</div>';
     return;
@@ -322,7 +324,15 @@ function renderTrace(trace) {
     guard_forced_finish: "受控兜底",
     cancelled: "运行已中止",
   };
+  let activePhase = null;
   trace.forEach((s) => {
+    const phase = tracePhase(s);
+    // Final Guard 放行后记录的“结论步骤完成”属于收尾，而不是新的执行轮次。
+    const keepFinishPhase = activePhase === "finish" && s.type === "plan_state";
+    if (phase && phase.key !== activePhase && !keepFinishPhase) {
+      appendTracePhase(box, phase);
+      activePhase = phase.key;
+    }
     const el = document.createElement("div");
     let cls = "tstep " + s.type;
     if (s.type === "tool_result" && s.is_error) cls += " error";
