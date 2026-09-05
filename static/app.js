@@ -9,6 +9,8 @@ const put = (url, body) =>
 const del = (url) => api(url, { method: "DELETE" });
 
 const SESSION = "demo";
+const MODE = Object.freeze({ VALIDATE: "validate", DEPOSIT: "deposit" });
+let activeMode = MODE.VALIDATE;
 // 策略样本来源:分开管理专家教学 / 专家纠错 / 工单复盘
 const SOURCE_LABEL = { taught: "专家教学", refine: "专家纠错", ticket: "工单复盘" };
 const srcLabel = (s) => SOURCE_LABEL[s] || "专家教学";
@@ -38,26 +40,45 @@ document.querySelectorAll(".tab").forEach((t) => {
   });
 });
 
-// ---------- 教学模式开关 ----------
+// ---------- 策略模式切换 ----------
 async function resetChat() {
   await post("/api/session/reset?session_id=" + SESSION);
   $("#messages").innerHTML = "";
   renderTrace([]);
 }
 
-$("#teach-toggle").addEventListener("change", async (e) => {
-  const on = e.target.checked;
-  $("#teach-box").classList.toggle("show", on);
-  $("#ask-box").classList.toggle("hidden", on);
-  $("#mode-hint").textContent = on
-    ? "专家教学:填写「问题现象 + 排查路径 + 策略原因」,沉淀为可召回策略。"
-    : "策略验证:输入 ODM 问题,观察 Agent 如何调用策略、SOP、案例和升级工具。";
-  // 切换模式=开始一段全新测试:清掉旧上下文,并让最新总纲/设定生效
+function isDepositMode() {
+  return activeMode === MODE.DEPOSIT;
+}
+
+function renderMode() {
+  const deposit = isDepositMode();
+  document.querySelectorAll(".mode-button").forEach((button) => {
+    const selected = button.dataset.mode === activeMode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  $("#teach-box").classList.toggle("show", deposit);
+  $("#ask-box").classList.toggle("hidden", deposit);
+  $("#mode-hint").textContent = deposit
+    ? "策略沉淀:录入专家确认的排查经验,形成可复用策略,供后续同类问题验证与召回。"
+    : "策略验证:输入 ODM 问题,观察策略如何被召回,并结合 SOP、缺陷案例和专家升级完成决策。";
+}
+
+async function selectMode(mode) {
+  if (![MODE.VALIDATE, MODE.DEPOSIT].includes(mode) || mode === activeMode) return;
+  activeMode = mode;
+  renderMode();
+  // 切换模式=开始一段全新验证:清掉旧上下文,并让最新总纲/设定生效
   await resetChat();
-  if (on) loadTaught();
+  if (isDepositMode()) loadTaught();
+}
+
+document.querySelectorAll(".mode-button").forEach((button) => {
+  button.addEventListener("click", () => selectMode(button.dataset.mode));
 });
 
-// 专家教学模式里展示已沉淀清单,避免重复录入
+// 策略沉淀模式里展示已沉淀清单,避免重复录入
 async function loadTaught() {
   const list = await api("/api/playbook");
   $("#taught-count").textContent = list.length;
@@ -117,7 +138,7 @@ function addBotMessage(text, opts = {}) {
         await post("/api/refine/commit", { question, answer: text, feedback });
         commitBtn.textContent = "已固化 ✓ 已并入总纲";
         refreshMetrics();
-        if ($("#teach-toggle").checked) loadTaught();
+        if (isDepositMode()) loadTaught();
       };
       bar.appendChild(commitBtn);
     }
@@ -279,7 +300,7 @@ $("#send").addEventListener("click", send);
 $("#input").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
 $("#reset").addEventListener("click", resetChat);
 
-// ---------- 教学提交 ----------
+// ---------- 策略沉淀提交 ----------
 $("#teach-btn").addEventListener("click", async () => {
   const question = $("#t-question").value.trim();
   const answer = $("#t-answer").value.trim();
@@ -298,7 +319,7 @@ QUICK.forEach((q) => {
   const b = document.createElement("button");
   b.textContent = q;
   b.onclick = () => {
-    if ($("#teach-toggle").checked) { $("#t-question").value = q; return; }
+    if (isDepositMode()) { $("#t-question").value = q; return; }
     $("#input").value = q; send();
   };
   quickBox.appendChild(b);
@@ -412,7 +433,7 @@ async function loadSamples() {
     ticket: { box: $("#samples-ticket"), cnt: $("#cnt-ticket") },
   };
   const emptyHint = {
-    taught: '<div class="empty">还没有专家教学样本。去「专家教学模式」录入几条。</div>',
+    taught: '<div class="empty">还没有专家教学样本。去「策略沉淀」录入几条。</div>',
     refine: '<div class="empty">还没有专家纠错记录。在策略验证页对回复点「纠错」并「固化为策略」即可产生。</div>',
     ticket: '<div class="empty">还没有工单复盘样本。</div>',
   };

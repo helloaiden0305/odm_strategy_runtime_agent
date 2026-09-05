@@ -8,7 +8,7 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">XZY ODM 问题排查策略平台 <span class="tag">Agent Loop · 专家教学 · 策略进化</span></div>
+    <div class="brand">XZY ODM 问题排查策略平台 <span class="tag">Agent Loop · 策略验证 · 策略沉淀</span></div>
     <nav class="tabs">
       <button class="tab active" data-tab="chat">策略验证</button>
       <button class="tab" data-tab="samples">策略样本库</button>
@@ -68,11 +68,11 @@
       <div class="chat-wrap">
         <div class="chat-col">
           <div class="mode-bar">
-            <label class="switch">
-              <input type="checkbox" id="teach-toggle" />
-              <span>专家教学模式</span>
-            </label>
-            <span class="mode-hint" id="mode-hint">策略验证:输入 ODM 问题,观察 Agent 如何调用策略、SOP、案例和升级工具。</span>
+            <div class="mode-selector" role="group" aria-label="策略工作模式">
+              <button type="button" class="mode-button active" data-mode="validate" aria-pressed="true">策略验证</button>
+              <button type="button" class="mode-button" data-mode="deposit" aria-pressed="false">策略沉淀</button>
+            </div>
+            <span class="mode-hint" id="mode-hint" aria-live="polite">策略验证:输入 ODM 问题,观察策略如何被召回,并结合 SOP、缺陷案例和专家升级完成决策。</span>
           </div>
 
           <div class="messages" id="messages"></div>
@@ -86,7 +86,7 @@
 
           <!-- 教学输入 -->
           <div class="teach-box" id="teach-box">
-            <div class="teach-title">录入专家排查经验(问题现象 + 排查路径 + 策略原因)</div>
+            <div class="teach-title">录入已确认的排查经验(问题现象 + 排查路径 + 策略原因)</div>
             <input id="t-question" type="text" placeholder="问题现象,例如:蓝牙耳机偶现连接失败" autocomplete="off" />
             <textarea id="t-answer" placeholder="建议排查路径,例如:先确认复现频率、设备型号、固件版本、耳机型号和 bt_stack 日志…"></textarea>
             <textarea id="t-note" placeholder="策略原因,例如:蓝牙问题不要直接判硬件,先补齐复现环境和协议栈证据"></textarea>
