@@ -92,7 +92,7 @@ class AgentLoop:
             return "规划模型鉴权失败。"
         if "connection" in name or "connect" in message:
             return "规划模型连接失败。"
-        if "valueerror" in name:
+        if "validation" in name or "valueerror" in name:
             return "规划结构不符合约定。"
         return f"规划请求异常（{type(exc).__name__}）。"
 

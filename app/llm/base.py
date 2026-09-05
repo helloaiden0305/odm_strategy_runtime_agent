@@ -6,7 +6,9 @@ Agent Loop 只依赖这个接口;把 MockProvider 换成真实模型(OpenAI 兼�
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 @dataclass
@@ -36,79 +38,62 @@ class LLMDecision:
     content: Optional[str] = None
 
 
-@dataclass
-class PlanStep:
+class _PlannerSchema(BaseModel):
+    """Planner 输入输出共用的严格 Schema 基类。"""
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+
+class PlanStep(_PlannerSchema):
     """一次策略运行中的受控执行阶段。"""
-    id: str
-    goal: str
-    allowed_tools: list[str]
-    required_evidence: list[str] = field(default_factory=list)
-    exit_condition: str = ""
-    fallback: str = ""
-    status: str = "pending"
+    id: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    goal: str = Field(..., min_length=1, max_length=160)
+    allowed_tools: list[str] = Field(..., min_length=1, max_length=4)
+    required_evidence: list[str] = Field(default_factory=list, max_length=6)
+    exit_condition: str = Field(..., min_length=1, max_length=160)
+    fallback: str = Field(..., min_length=1, max_length=160)
+    status: Literal["pending", "running", "completed", "blocked", "skipped"] = "pending"
+
+    @field_validator("allowed_tools", "required_evidence", mode="before")
+    @classmethod
+    def normalize_single_value_list(cls, value: Any) -> Any:
+        """仅兼容单值字符串，避免低风险格式波动导致整轮降级。"""
+        if isinstance(value, str):
+            return [value]
+        if value is None:
+            return []
+        return value
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "goal": self.goal,
-            "allowed_tools": list(self.allowed_tools),
-            "required_evidence": list(self.required_evidence),
-            "exit_condition": self.exit_condition,
-            "fallback": self.fallback,
-            "status": self.status,
-        }
+        return self.model_dump()
 
 
-@dataclass
-class AgentPlan:
+class AgentPlan(_PlannerSchema):
     """Planner 产生的简短、可审计计划，而非模型完整思维链。"""
-    goal: str
-    decision_reason: str
-    evidence_gap: list[str]
-    steps: list[PlanStep]
-    replan_count: int = 0
+    goal: str = Field(..., min_length=1, max_length=160)
+    decision_reason: str = Field(..., min_length=1, max_length=160)
+    evidence_gap: list[str] = Field(default_factory=list, max_length=6)
+    steps: list[PlanStep] = Field(..., min_length=1, max_length=3)
+    replan_count: int = Field(default=0, ge=0, le=1)
+
+    @field_validator("evidence_gap", mode="before")
+    @classmethod
+    def normalize_evidence_gap(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [value]
+        if value is None:
+            return []
+        return value
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "goal": self.goal,
-            "decision_reason": self.decision_reason,
-            "evidence_gap": list(self.evidence_gap),
-            "steps": [step.to_dict() for step in self.steps],
-            "replan_count": self.replan_count,
-        }
+        return self.model_dump()
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "AgentPlan":
-        raw_steps = payload.get("steps")
-        if not isinstance(raw_steps, list):
-            raise ValueError("steps 必须是数组")
-        steps: list[PlanStep] = []
-        for raw in raw_steps:
-            if not isinstance(raw, dict):
-                raise ValueError("每个步骤必须是对象")
-            tools = raw.get("allowed_tools")
-            gaps = raw.get("required_evidence", [])
-            if not isinstance(tools, list) or not isinstance(gaps, list):
-                raise ValueError("步骤工具和证据必须是数组")
-            steps.append(PlanStep(
-                id=str(raw.get("id", "")),
-                goal=str(raw.get("goal", "")),
-                allowed_tools=[str(item) for item in tools],
-                required_evidence=[str(item) for item in gaps],
-                exit_condition=str(raw.get("exit_condition", "")),
-                fallback=str(raw.get("fallback", "")),
-                status=str(raw.get("status", "pending")),
-            ))
-        gaps = payload.get("evidence_gap", [])
-        if not isinstance(gaps, list):
-            raise ValueError("evidence_gap 必须是数组")
-        return cls(
-            goal=str(payload.get("goal", "")),
-            decision_reason=str(payload.get("decision_reason", "")),
-            evidence_gap=[str(item) for item in gaps],
-            steps=steps,
-            replan_count=int(payload.get("replan_count", 0)),
-        )
+        return cls.model_validate(payload)
 
 
 class LLMProvider(ABC):

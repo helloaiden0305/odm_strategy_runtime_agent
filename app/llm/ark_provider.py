@@ -27,35 +27,55 @@ class ArkLLMProvider(LLMProvider):
     def plan(self, messages: list[dict[str, Any]],
              tools: list[dict[str, Any]]) -> AgentPlan:
         tool_names = [tool["name"] for tool in tools]
+        schema = AgentPlan.model_json_schema()
         planner_prompt = (
-            "你是 ODM 问题排查运行时的 Planner。只输出一个 JSON 对象，不要 Markdown。"
-            "JSON 必须含 goal、decision_reason、evidence_gap、steps；steps 为 1 到 3 项，"
-            "每项含 id、goal、allowed_tools、required_evidence、exit_condition、fallback、status。"
+            "你是 ODM 问题排查运行时的 Planner。只输出符合 JSON Schema 的 JSON 对象，不要 Markdown。"
             "decision_reason 是一两句审计摘要，不是完整思维链。首步 allowed_tools 必须包含 "
             "recall_troubleshooting_strategy；所有工具只能从以下名单选择："
             + ", ".join(tool_names)
+            + "。JSON Schema："
+            + json.dumps(schema, ensure_ascii=False)
         )
         planner_messages = [{"role": "system", "content": planner_prompt}, *messages]
-        raw = self._plan_completion(planner_messages)
+        raw = self._plan_completion(planner_messages, schema)
         try:
-            return AgentPlan.from_dict(json.loads(raw))
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            return AgentPlan.model_validate_json(raw)
+        except ValueError as exc:
             retry_messages = [
                 *planner_messages,
                 {"role": "assistant", "content": raw},
                 {"role": "user", "content": (
-                    "刚才的输出无法解析为合规 JSON。请仅输出符合约定字段的 JSON 对象，"
-                    f"不要解释。解析错误：{exc}"
+                    "刚才的输出未通过 Pydantic Schema 校验。请只输出修正后的 JSON 对象，"
+                    "数组字段 evidence_gap、allowed_tools、required_evidence 必须使用 []；"
+                    "不要使用 Markdown、解释或额外字段。校验错误：" + str(exc)
                 )},
             ]
-            return AgentPlan.from_dict(json.loads(self._plan_completion(retry_messages)))
+            return AgentPlan.model_validate_json(self._plan_completion(retry_messages, schema))
 
-    def _plan_completion(self, messages: list[dict[str, Any]]) -> str:
-        resp = self.client.chat.completions.create(
-            model=self.model,
-            messages=_to_openai_messages(messages),
-            temperature=0.1,
-        )
+    def _plan_completion(self, messages: list[dict[str, Any]],
+                         schema: dict[str, Any]) -> str:
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": _to_openai_messages(messages),
+            "temperature": 0.1,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "odm_agent_plan",
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
+        }
+        try:
+            resp = self.client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            message = str(exc).lower()
+            if "response_format" not in message and "json_schema" not in message:
+                raise
+            # 兼容不支持 response_format 的 OpenAI 兼容端点；仍由 Pydantic 做本地强校验。
+            kwargs.pop("response_format")
+            resp = self.client.chat.completions.create(**kwargs)
         return (resp.choices[0].message.content or "").strip()
 
     def replan(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]],

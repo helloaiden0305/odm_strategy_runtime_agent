@@ -132,7 +132,8 @@ ARK_EMBED_MODEL=
 
 当前 Demo 内置了一层轻量工具治理能力,用于降低 Agent Loop 调错工具、漏传参数或低质量召回带来的不确定性:
 
-- **入参校验**:每个工具在 `app/agent/tools/schemas.py` 中有 Pydantic 入参模型。缺少必填参数或类型错误时,不会导致服务崩溃,而是结构化回填给 Agent Loop。
+- **入参校验**:每个工具在 `app/agent/tools/schemas.py` 中有 Pydantic 入参模型。缺少必填参数、类型错误或额外字段时,不会导致服务崩溃,而是结构化回填给 Agent Loop。
+- **规划契约**:Planner 的 `AgentPlan` 与 `PlanStep` 同样由 Pydantic 生成 JSON Schema 约束。真实模型优先按 Schema 输出；本地会再次拒绝额外字段、非法步骤状态和不合规参数格式，并对单个证据或工具名称的字符串输出兼容归一为数组。
 - **统一出参**:工具结果统一包含 `ok`、`tool`、`data`、`error`、`meta`。为兼容已有前端和 Mock LLM,仍保留部分旧字段如 `count`、`samples`、`found`、`ticket_id`。
 - **Trace 显式字段**:`tool_call` / `tool_result` 包含 `tool_exists`、`input_valid`、`result_ok`、`result_count` 等字段。
 - **召回质量过滤**:`recall_troubleshooting_strategy` 按 `PLAYBOOK_SCORE_THRESHOLD` 过滤低相似度策略样本,并在 `meta` 中记录阈值、过滤前数量、过滤后数量和低置信度标记。
