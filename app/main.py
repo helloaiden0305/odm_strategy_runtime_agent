@@ -8,7 +8,8 @@ from . import config
 from .db import init_db
 from .models import (ChatRequest, ChatResponse, TeachRequest,
                      TicketTeachRequest, SampleUpdate, DirectiveUpdate,
-                     SummaryUpdate, RefineRequest, RefineCommitRequest)
+                     SummaryUpdate, RefineRequest, RefineCommitRequest,
+                     CancelRunRequest)
 from .services import (chat_service, review_service, playbook_service,
                        settings_service)
 
@@ -24,13 +25,23 @@ def _startup() -> None:
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(req: ChatRequest) -> ChatResponse:
-    result = chat_service.handle_chat(req.message, req.session_id or "demo")
+    result = chat_service.handle_chat(
+        req.message,
+        req.session_id or "demo",
+        req.run_id,
+    )
     return ChatResponse(
         reply=result.reply,
         handoff=result.handoff,
         ticket_id=result.ticket_id,
+        cancelled=result.cancelled,
         trace=result.trace,
     )
+
+
+@app.post("/api/chat/cancel")
+def cancel_chat(req: CancelRunRequest) -> dict:
+    return {"ok": True, "cancelled": chat_service.cancel_run(req.session_id, req.run_id)}
 
 
 @app.post("/api/session/reset")

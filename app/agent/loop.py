@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from ..llm.base import LLMProvider
 from .. import config
@@ -24,6 +24,7 @@ class LoopResult:
     ticket_id: int | None = None
     kb_hit: bool = False
     session_messages: list[dict[str, Any]] = field(default_factory=list)
+    cancelled: bool = False
 
 
 class AgentLoop:
@@ -85,7 +86,8 @@ class AgentLoop:
     def run(self, user_message: str,
             history: list[dict[str, Any]] | None = None,
             system: str | None = None,
-            handoff_context: dict[str, Any] | None = None) -> LoopResult:
+            handoff_context: dict[str, Any] | None = None,
+            should_cancel: Callable[[], bool] | None = None) -> LoopResult:
         messages: list[dict[str, Any]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -101,7 +103,18 @@ class AgentLoop:
         step = 0
         reply = "抱歉,系统繁忙,请稍后再试。"
 
+        def cancelled() -> bool:
+            return bool(should_cancel and should_cancel())
+
+        def cancelled_result() -> LoopResult:
+            trace.append({"step": step, "type": "cancelled", "content": "(本轮策略验证已中止)"})
+            return LoopResult(reply="", trace=trace, handoff=handoff,
+                              ticket_id=ticket_id, kb_hit=kb_hit,
+                              session_messages=messages, cancelled=True)
+
         while step < config.MAX_LOOP_STEPS:
+            if cancelled():
+                return cancelled_result()
             if time.time() - started > config.LOOP_TIMEOUT_SECONDS:
                 reply = "处理超时,已为您转接人工客服。"
                 trace.append({"step": step, "type": "final",
@@ -118,6 +131,9 @@ class AgentLoop:
 
             decision = self.llm.chat(messages, schemas)
 
+            if cancelled():
+                return cancelled_result()
+
             # ② LLM 返回后:记录模型原始决策(调试"模型决定做什么")
             trace.append({"step": step, "type": "llm_response",
                           "decision": decision.type,
@@ -132,6 +148,8 @@ class AgentLoop:
                               "content": decision.thought})
 
             if decision.type == "final":
+                if cancelled():
+                    return cancelled_result()
                 reply = decision.content or ""
                 trace.append({"step": step, "type": "final", "content": reply})
                 messages.append({"role": "assistant", "content": reply})
@@ -147,6 +165,8 @@ class AgentLoop:
                                for c in calls],
             })
             for call in calls:
+                if cancelled():
+                    return cancelled_result()
                 tool = self.tools.get(call.name)
                 tool_exists = tool is not None
                 input_valid = False
@@ -183,7 +203,10 @@ class AgentLoop:
                                           "input_valid": input_valid,
                                           "error": validation_error})
                         else:
-                            result = tool.run(**payload)
+                            run_kwargs = dict(payload)
+                            if call.name == "escalate_to_expert":
+                                run_kwargs["_should_cancel"] = should_cancel
+                            result = tool.run(**run_kwargs)
                 except Exception as exc:  # 工具异常转成观测结果回填,让模型自行纠错
                     result = {
                         "ok": False,
@@ -192,6 +215,15 @@ class AgentLoop:
                         "error": f"工具 {call.name} 执行出错:{exc}",
                         "meta": {"exception_type": type(exc).__name__},
                     }
+
+                # 升级工具已经是有副作用的写入。若刚写完即收到取消,
+                # 将 ticket_id 交给服务层只回滚本次运行生成的那张工单。
+                if call.name == "escalate_to_expert" and isinstance(result, dict):
+                    handoff = bool(result.get("ticket_id"))
+                    ticket_id = result.get("ticket_id")
+
+                if cancelled():
+                    return cancelled_result()
 
                 is_error = (
                     isinstance(result, dict)
@@ -210,9 +242,6 @@ class AgentLoop:
                                  "name": call.name, "result": result})
 
                 # 旁路记录关键信号(用于指标与返回)
-                if call.name == "escalate_to_expert" and isinstance(result, dict):
-                    handoff = True
-                    ticket_id = result.get("ticket_id")
                 if call.name == "recall_troubleshooting_strategy" and isinstance(result, dict):
                     kb_hit = kb_hit or bool(result.get("count"))
         else:
@@ -220,6 +249,9 @@ class AgentLoop:
             reply = "这个问题比较复杂,已为您转接人工客服跟进。"
             trace.append({"step": step, "type": "final",
                           "content": "(达到最大循环步数,边界控制触发)"})
+
+        if cancelled():
+            return cancelled_result()
 
         return LoopResult(reply=reply, trace=trace, handoff=handoff,
                           ticket_id=ticket_id, kb_hit=kb_hit,

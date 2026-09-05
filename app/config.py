@@ -31,6 +31,8 @@ RESET_DEMO_RUNTIME_ON_START = os.getenv("RESET_DEMO_RUNTIME_ON_START", "true").l
 
 # 选用的 LLM 提供方:mock(离线桩)| ark(真实豆包/火山引擎 ARK)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "mock")
+# 仅用于本机验收运行中断逻辑;默认 0,不影响常规 Demo。
+MOCK_LLM_DELAY_SECONDS = float(os.getenv("MOCK_LLM_DELAY_SECONDS", "0"))
 
 # 豆包(火山引擎 ARK)配置,OpenAI 兼容接口
 ARK_API_KEY = os.getenv("ARK_API_KEY", "")

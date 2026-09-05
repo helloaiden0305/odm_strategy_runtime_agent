@@ -75,6 +75,7 @@ main { padding: 18px 24px; }
   background: var(--primary); color: #fff; font-size: 14px;
 }
 .composer button.ghost { background: var(--soft); color: var(--muted); }
+.composer button:disabled { cursor: wait; opacity: .65; }
 .quick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .quick button {
   font-size: 12px; padding: 6px 10px; border: 1px dashed var(--line);

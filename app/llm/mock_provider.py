@@ -7,9 +7,11 @@
 """
 from __future__ import annotations
 import re
+import time
 from typing import Any
 
 from .base import LLMProvider, LLMDecision, ToolCall
+from .. import config
 
 # 各类意图的关键词
 _HANDOFF_RE = re.compile(r"(升级测试专家|升级专家|判断不了|看不准|人工判断|转专家|专家)")
@@ -49,6 +51,8 @@ def _tool_results_since_last_user(messages: list[dict[str, Any]]) -> dict[str, A
 
 class MockLLMProvider(LLMProvider):
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMDecision:
+        if config.MOCK_LLM_DELAY_SECONDS:
+            time.sleep(config.MOCK_LLM_DELAY_SECONDS)
         question = _last_user_message(messages)
         done = _tool_results_since_last_user(messages)
 

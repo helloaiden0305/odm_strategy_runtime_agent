@@ -1,8 +1,8 @@
 const $ = (sel) => document.querySelector(sel);
 const api = async (url, opts) => (await fetch(url, opts)).json();
-const post = (url, body) =>
+const post = (url, body, options = {}) =>
   api(url, { method: "POST", headers: { "Content-Type": "application/json" },
-             body: body ? JSON.stringify(body) : undefined });
+             body: body ? JSON.stringify(body) : undefined, ...options });
 const put = (url, body) =>
   api(url, { method: "PUT", headers: { "Content-Type": "application/json" },
              body: JSON.stringify(body) });
@@ -11,6 +11,9 @@ const del = (url) => api(url, { method: "DELETE" });
 const SESSION = "demo";
 const MODE = Object.freeze({ VALIDATE: "validate", DEPOSIT: "deposit" });
 let activeMode = MODE.VALIDATE;
+let activeRun = null;
+let sessionResetting = false;
+let runCounter = 0;
 // 策略样本来源:分开管理专家教学 / 专家纠错 / 工单复盘
 const SOURCE_LABEL = { taught: "专家教学", refine: "专家纠错", ticket: "工单复盘" };
 const srcLabel = (s) => SOURCE_LABEL[s] || "专家教学";
@@ -41,10 +44,55 @@ document.querySelectorAll(".tab").forEach((t) => {
 });
 
 // ---------- 策略模式切换 ----------
-async function resetChat() {
-  await post("/api/session/reset?session_id=" + SESSION);
+function clearConversation() {
   $("#messages").innerHTML = "";
   renderTrace([]);
+}
+
+function renderRunControls() {
+  const running = Boolean(activeRun);
+  $("#send").disabled = running || sessionResetting;
+  $("#input").disabled = running || sessionResetting;
+  $("#reset").disabled = sessionResetting;
+  $("#reset").textContent = running ? "中止并重置" : "重置";
+}
+
+function createRunId() {
+  runCounter += 1;
+  return globalThis.crypto?.randomUUID?.() || `run-${Date.now()}-${runCounter}`;
+}
+
+async function cancelActiveRun(reason) {
+  const run = activeRun;
+  if (!run) return false;
+  activeRun = null;
+  run.controller.abort();
+  clearConversation();
+  renderRunControls();
+  try {
+    await post("/api/chat/cancel", {
+      session_id: SESSION,
+      run_id: run.runId,
+      reason,
+    });
+  } catch (error) {
+    // 浏览器中止旧请求后,取消通知失败不应阻断用户开始下一轮操作。
+    console.warn("策略运行取消通知失败", error);
+  }
+  return true;
+}
+
+async function resetChat(reason = "reset") {
+  sessionResetting = true;
+  renderRunControls();
+  await cancelActiveRun(reason);
+  try {
+    await post("/api/session/reset?session_id=" + SESSION);
+  } finally {
+    clearConversation();
+    sessionResetting = false;
+    renderRunControls();
+  }
 }
 
 function isDepositMode() {
@@ -69,10 +117,9 @@ function renderMode() {
 
 async function selectMode(mode) {
   if (![MODE.VALIDATE, MODE.DEPOSIT].includes(mode) || mode === activeMode) return;
+  await resetChat("mode_switch");
   activeMode = mode;
   renderMode();
-  // 切换模式=开始一段全新验证:清掉旧上下文,并让最新总纲/设定生效
-  await resetChat();
   if (isDepositMode()) loadTaught();
 }
 
@@ -286,21 +333,42 @@ function renderTrace(trace) {
 }
 
 async function send() {
+  if (sessionResetting) return;
+  if (activeRun) await resetChat("superseded");
   const input = $("#input");
   const text = input.value.trim();
   if (!text) return;
+  const run = { runId: createRunId(), controller: new AbortController() };
+  activeRun = run;
+  renderRunControls();
   input.value = "";
   addMessage(text, "user");
   renderTrace([{ step: 0, type: "think", content: "Agent 正在规划排查路径……" }]);
-  const res = await post("/api/chat", { message: text, session_id: SESSION });
-  addBotMessage(res.reply, { handoff: res.handoff, question: text });
-  renderTrace(res.trace);
-  refreshMetrics();
+  try {
+    const res = await post("/api/chat", {
+      message: text,
+      session_id: SESSION,
+      run_id: run.runId,
+    }, { signal: run.controller.signal });
+    if (activeRun?.runId !== run.runId || res.cancelled) return;
+    addBotMessage(res.reply, { handoff: res.handoff, question: text });
+    renderTrace(res.trace);
+    refreshMetrics();
+  } catch (error) {
+    if (error.name !== "AbortError" && activeRun?.runId === run.runId) {
+      console.error("策略验证请求失败", error);
+    }
+  } finally {
+    if (activeRun?.runId === run.runId) {
+      activeRun = null;
+      renderRunControls();
+    }
+  }
 }
 
 $("#send").addEventListener("click", send);
 $("#input").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
-$("#reset").addEventListener("click", resetChat);
+$("#reset").addEventListener("click", () => resetChat("reset"));
 
 // ---------- 策略沉淀提交 ----------
 $("#teach-btn").addEventListener("click", async () => {

@@ -1,7 +1,10 @@
 """策略验证服务:维护会话上下文、驱动 Agent Loop、记录指标。"""
 from __future__ import annotations
 import re
+from dataclasses import dataclass
+from threading import RLock
 from typing import Any
+from uuid import uuid4
 
 from ..agent.loop import AgentLoop, LoopResult
 from ..llm.mock_provider import MockLLMProvider
@@ -12,6 +15,16 @@ from .. import config
 # 简单的进程内会话存储(演示用;生产可换 Redis/DB)
 _SESSIONS: dict[str, list[dict[str, Any]]] = {}
 _SESSION_CONTEXT: dict[str, dict[str, Any]] = {}
+_RUN_LOCK = RLock()
+
+
+@dataclass
+class _RunState:
+    run_id: str
+    cancelled: bool = False
+
+
+_ACTIVE_RUNS: dict[str, _RunState] = {}
 _HANDOFF_TEXT_RE = re.compile(r"(升级测试专家|升级专家|判断不了|看不准|人工判断|转专家|专家)")
 _BUSINESS_SIGNAL_RE = re.compile(
     r"(蓝牙|刷机|OTA|ota|ANR|anr|日志|logcat|bt_stack|traces|卡死|压测|固件|连接|失败|失败码)"
@@ -71,28 +84,101 @@ _BASE_PROMPT = (
 )
 
 
-def handle_chat(message: str, session_id: str = "demo") -> LoopResult:
+def _clear_session_context_locked(session_id: str) -> None:
+    _SESSIONS.pop(session_id, None)
+    _SESSION_CONTEXT.pop(session_id, None)
+
+
+def _start_run(session_id: str, run_id: str) -> None:
+    with _RUN_LOCK:
+        previous = _ACTIVE_RUNS.get(session_id)
+        if previous:
+            previous.cancelled = True
+            _clear_session_context_locked(session_id)
+        _ACTIVE_RUNS[session_id] = _RunState(run_id=run_id)
+
+
+def _is_run_cancelled(session_id: str, run_id: str) -> bool:
+    with _RUN_LOCK:
+        state = _ACTIVE_RUNS.get(session_id)
+        return state is None or state.run_id != run_id or state.cancelled
+
+
+def cancel_run(session_id: str = "demo", run_id: str | None = None) -> bool:
+    """取消当前运行并清空该运行的会话上下文。"""
+    with _RUN_LOCK:
+        state = _ACTIVE_RUNS.get(session_id)
+        if state is None:
+            if run_id is None:
+                _clear_session_context_locked(session_id)
+            return False
+        if run_id is not None and state.run_id != run_id:
+            return False
+        state.cancelled = True
+        _clear_session_context_locked(session_id)
+        return True
+
+
+def _rollback_cancelled_ticket(ticket_id: int | None) -> None:
+    if ticket_id is None:
+        return
+    with cursor() as cur:
+        cur.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+
+
+def _finish_cancelled_run(session_id: str, run_id: str, ticket_id: int | None) -> None:
+    _rollback_cancelled_ticket(ticket_id)
+    with _RUN_LOCK:
+        state = _ACTIVE_RUNS.get(session_id)
+        if state and state.run_id == run_id:
+            _clear_session_context_locked(session_id)
+            _ACTIVE_RUNS.pop(session_id, None)
+
+
+def _persist_completed_run(session_id: str, run_id: str, message: str,
+                           result: LoopResult) -> bool:
+    """仅让仍处于活跃状态的运行写入会话和指标。"""
+    with _RUN_LOCK:
+        state = _ACTIVE_RUNS.get(session_id)
+        if state is None or state.run_id != run_id or state.cancelled:
+            return False
+
+        _SESSIONS[session_id] = [
+            m for m in result.session_messages
+            if m.get("role") == "user"
+            or (m.get("role") == "assistant" and not m.get("tool_calls"))
+        ]
+        _log_metrics(session_id, message, result)
+        _remember_business_context(session_id, message, result)
+        _ACTIVE_RUNS.pop(session_id, None)
+        return True
+
+
+def handle_chat(message: str, session_id: str = "demo",
+                run_id: str | None = None) -> LoopResult:
+    run_id = run_id or uuid4().hex
+    _start_run(session_id, run_id)
+
     # system 每轮由 Loop 注入最新的 effective_system_prompt(总纲/业务设定实时生效),
     # 会话存储只保留用户消息和最终回复。
-    history = _SESSIONS.get(session_id, [])
-
-    handoff_context = _build_handoff_context(message, session_id)
+    with _RUN_LOCK:
+        history = list(_SESSIONS.get(session_id, []))
+        handoff_context = _build_handoff_context(message, session_id)
     result = _LOOP.run(
         message,
         history=history,
         system=effective_system_prompt(),
         handoff_context=handoff_context,
+        should_cancel=lambda: _is_run_cancelled(session_id, run_id),
     )
 
-    # 只把用户与最终回复(不含中间的 tool_calls / tool 消息)落进会话上下文
-    _SESSIONS[session_id] = [
-        m for m in result.session_messages
-        if m.get("role") == "user"
-        or (m.get("role") == "assistant" and not m.get("tool_calls"))
-    ]
+    if result.cancelled or _is_run_cancelled(session_id, run_id):
+        _finish_cancelled_run(session_id, run_id, result.ticket_id)
+        return LoopResult(reply="", trace=[], cancelled=True)
 
-    _log_metrics(session_id, message, result)
-    _remember_business_context(session_id, message, result)
+    if not _persist_completed_run(session_id, run_id, message, result):
+        _finish_cancelled_run(session_id, run_id, result.ticket_id)
+        return LoopResult(reply="", trace=[], cancelled=True)
     return result
 
 
@@ -184,8 +270,7 @@ def _log_metrics(session_id: str, question: str, result: LoopResult) -> None:
 
 
 def reset_session(session_id: str = "demo") -> None:
-    _SESSIONS.pop(session_id, None)
-    _SESSION_CONTEXT.pop(session_id, None)
+    cancel_run(session_id)
 
 
 def refine_reply(question: str, reply: str, feedback: str, session_id: str = "demo") -> str:
