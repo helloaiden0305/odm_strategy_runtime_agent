@@ -79,6 +79,23 @@ class AgentLoop:
             "content": reason,
         })
 
+    @staticmethod
+    def _planner_failure_reason(exc: Exception) -> str:
+        """向 Trace 提供可定位但不暴露 Provider 原始响应的降级原因。"""
+        name = type(exc).__name__.lower()
+        message = str(exc).lower()
+        if "json" in name or "json" in message:
+            return "规划结果不是合规 JSON。"
+        if "timeout" in name or "timeout" in message:
+            return "规划请求超时。"
+        if "auth" in name or "api_key" in message or "401" in message:
+            return "规划模型鉴权失败。"
+        if "connection" in name or "connect" in message:
+            return "规划模型连接失败。"
+        if "valueerror" in name:
+            return "规划结构不符合约定。"
+        return f"规划请求异常（{type(exc).__name__}）。"
+
     def _create_plan(self, messages: list[dict[str, Any]],
                      trace: list[dict[str, Any]]) -> AgentPlan:
         schemas = self._tool_schemas()
@@ -90,7 +107,7 @@ class AgentLoop:
             plan = build_safe_default_plan()
             trace.append({"step": 0, "type": "plan_invalid",
                           "content": "Planner 输出不可用，已采用安全默认计划。",
-                          "error": f"{type(exc).__name__}: {exc}"})
+                          "error": self._planner_failure_reason(exc)})
 
         guard = validate_plan(plan, set(self.tools))
         trace.append({"step": 0, "type": "plan_guard", "ok": guard.valid,

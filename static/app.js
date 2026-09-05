@@ -377,6 +377,10 @@ function renderTrace(trace) {
       }
     }
 
+    if (s.type === "plan_invalid" && s.error) {
+      inner += `<div class="err-hint">降级原因:${escapeHtml(s.error)}</div>`;
+    }
+
     if (s.type === "plan_guard" || s.type === "final_guard") {
       inner += `<div class="sub">${s.ok ? "校验通过" : "校验未通过"}</div>`;
       if (Array.isArray(s.reasons) && s.reasons.length) {
