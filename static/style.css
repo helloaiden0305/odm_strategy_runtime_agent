@@ -168,17 +168,16 @@ main { padding: 18px 24px; }
 .note-box { font-size: 13px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 8px; padding: 8px; margin: 6px 0; }
 
 /* 策略模式切换 */
-.mode-bar { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
-.mode-selector { display: inline-flex; flex: 0 0 auto; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+.mode-bar { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; flex-direction: column; }
+.mode-selector { display: inline-flex; max-width: 100%; border-bottom: 1px solid var(--line); }
 .mode-button {
-  min-width: 88px; min-height: 32px; padding: 6px 12px; border: 0; border-radius: 6px;
-  background: transparent; color: #475569; cursor: pointer; font-size: 13px; font-weight: 600;
-  font-family: inherit;
+  min-width: 96px; min-height: 36px; padding: 7px 14px; border: 0; border-bottom: 2px solid transparent;
+  background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 600; font-family: inherit;
 }
-.mode-button:hover { color: var(--primary-d); background: #e6efff; }
-.mode-button.active { background: var(--primary); color: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .16); }
-.mode-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.mode-hint { flex: 1 1 280px; padding: 7px 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.mode-button:hover { color: var(--primary-d); background: #f8fafc; }
+.mode-button.active { border-bottom-color: var(--primary); color: var(--primary-d); }
+.mode-button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px #93c5fd; }
+.mode-hint { padding: 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
 
 /* 教学输入区 */
 .teach-box { display: none; flex-direction: column; gap: 8px; margin-top: 12px;
@@ -191,6 +190,10 @@ main { padding: 18px 24px; }
 .teach-box input:focus, .teach-box textarea:focus { border-color: var(--primary); }
 .teach-box button { align-self: flex-start; padding: 8px 18px; border: none; border-radius: 8px; cursor: pointer; background: var(--primary); color: #fff; font-size: 13px; }
 .composer.hidden { display: none; }
+.messages.hidden { display: none; }
+#tab-chat.deposit-mode .chat-wrap { grid-template-columns: 1fr; }
+#tab-chat.deposit-mode .chat-col { min-height: auto; }
+#tab-chat.deposit-mode .trace-col { display: none; }
 
 /* 教学模式:已教过清单 */
 .taught-wrap { margin-top: 6px; border-top: 1px dashed var(--line); padding-top: 10px; }
@@ -255,5 +258,4 @@ main { padding: 18px 24px; }
   .chat-wrap { grid-template-columns: 1fr; }
   .review-actions { justify-content: flex-start; }
   .settings-actions, .card .actions, .msg-actions { flex-wrap: wrap; }
-  .mode-hint { flex-basis: 100%; padding-top: 0; }
 }

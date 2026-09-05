@@ -60,6 +60,8 @@ function renderMode() {
   });
   $("#teach-box").classList.toggle("show", deposit);
   $("#ask-box").classList.toggle("hidden", deposit);
+  $("#messages").classList.toggle("hidden", deposit);
+  $("#tab-chat").classList.toggle("deposit-mode", deposit);
   $("#mode-hint").textContent = deposit
     ? "策略沉淀:录入专家确认的排查经验,形成可复用策略,供后续同类问题验证与召回。"
     : "策略验证:输入 ODM 问题,观察策略如何被召回,并结合 SOP、缺陷案例和专家升级完成决策。";
