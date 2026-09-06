@@ -143,14 +143,16 @@ ARK_EMBED_MODEL=
 
 策略验证不是由模型拿到全部工具后自由发挥。每次运行先由 Planner 生成一份最多三步的结构化短计划，包含目标、决策摘要、证据缺口、允许工具、退出条件和兜底路径；`decision_reason` 是面向审计的简短摘要，不是模型完整思维链。
 
-```text
-Planner
--> Plan Guard 校验首步策略召回、工具白名单和步骤结构
--> Executor 在当前步骤仅暴露获准工具
--> ReAct Loop 根据工具 Observation 继续决策
--> Plan State 记录 completed / blocked / skipped
--> 必要时最多一次 Replan
--> Final Guard 校验证据门禁，未满足则升级测试专家
+```mermaid
+flowchart TD
+    A[用户问题] --> B[Planner：生成短计划]
+    B --> C{Plan Guard}
+    C -- 通过或安全降级 --> D[受控执行：模型决策<br/>代码校验并执行工具]
+    D --> E[Observation：更新步骤状态]
+    E --> F{Final Guard：证据满足？}
+    F -- 继续 --> D
+    F -- 是 --> G([输出结论])
+    F -- 否 --> H[重规划或升级专家]
 ```
 
 Plan、Guard、重规划和收尾校验均写入 Trace。重置、模式切换或新运行覆盖旧运行时，运行取消优先于上述全部阶段；被取消运行不会回写计划、会话、指标、上下文或工单。
