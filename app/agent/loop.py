@@ -563,7 +563,7 @@ class AgentLoop:
             current_plan_step = self._next_plan_step(plan)
             handoff, ticket_id, reply = self._force_expert_handoff(
                 user_message, handoff_context, should_cancel, trace, turn,
-                current_plan_step, ["达到最大循环步数，边界控制触发"],
+                current_plan_step, ["达到最大 Agent Turn，边界控制触发"],
             )
             if cancelled():
                 return cancelled_result()
