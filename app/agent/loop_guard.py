@@ -5,6 +5,8 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from threading import RLock
+import time
 from typing import Any
 
 from .. import config
@@ -105,3 +107,79 @@ class RunCycleGuard:
                 information_gain=information_gain,
             )
         return None
+
+
+@dataclass(frozen=True)
+class CircuitDecision:
+    allowed: bool
+    state: str
+    retry_after_seconds: int = 0
+
+
+@dataclass(frozen=True)
+class CircuitEvent:
+    reason: str
+    consecutive_failures: int
+
+
+@dataclass
+class _CircuitState:
+    consecutive_failures: int = 0
+    open_until: float = 0
+    half_open_probe_active: bool = False
+
+
+class ToolCircuitBreaker:
+    """仅用于 Demo 演示的进程内工具熔断器，状态跨 Run 保留。"""
+
+    def __init__(self) -> None:
+        self._states: dict[str, _CircuitState] = {}
+        self._lock = RLock()
+
+    @staticmethod
+    def enabled() -> bool:
+        return config.DEMO_TOOL_CIRCUIT_BREAKER_ENABLED
+
+    def should_inject_failure(self, tool: str) -> bool:
+        return self.enabled() and tool in config.DEMO_TOOL_CIRCUIT_FAIL_TOOLS
+
+    def before_call(self, tool: str) -> CircuitDecision:
+        if not self.enabled():
+            return CircuitDecision(allowed=True, state="disabled")
+        now = time.monotonic()
+        with self._lock:
+            state = self._states.setdefault(tool, _CircuitState())
+            if state.open_until > now:
+                return CircuitDecision(
+                    allowed=False,
+                    state="open",
+                    retry_after_seconds=max(1, int(state.open_until - now)),
+                )
+            if state.open_until:
+                if state.half_open_probe_active:
+                    return CircuitDecision(allowed=False, state="half_open")
+                state.half_open_probe_active = True
+                return CircuitDecision(allowed=True, state="half_open")
+            return CircuitDecision(allowed=True, state="closed")
+
+    def record(self, tool: str, success: bool) -> CircuitEvent | None:
+        if not self.enabled():
+            return None
+        with self._lock:
+            state = self._states.setdefault(tool, _CircuitState())
+            was_half_open = state.half_open_probe_active
+            if success:
+                state.consecutive_failures = 0
+                state.open_until = 0
+                state.half_open_probe_active = False
+                return CircuitEvent("tool_circuit_recovered", 0) if was_half_open else None
+
+            state.consecutive_failures += 1
+            if was_half_open or state.consecutive_failures >= config.DEMO_TOOL_CIRCUIT_FAILURE_THRESHOLD:
+                state.open_until = time.monotonic() + config.DEMO_TOOL_CIRCUIT_COOLDOWN_SECONDS
+                state.half_open_probe_active = False
+                return CircuitEvent(
+                    "tool_circuit_reopened" if was_half_open else "tool_circuit_opened",
+                    state.consecutive_failures,
+                )
+            return None

@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from ..llm.base import AgentPlan, LLMProvider, PlanStep
 from .. import config
-from .loop_guard import RunCycleGuard
+from .loop_guard import RunCycleGuard, ToolCircuitBreaker
 from .plan import build_safe_default_plan, validate_plan
 from .tools import build_registry
 
@@ -35,6 +35,7 @@ class AgentLoop:
     def __init__(self, llm: LLMProvider):
         self.llm = llm
         self.tools = build_registry()
+        self.circuit_breaker = ToolCircuitBreaker()
 
     def _tool_schemas(self) -> list[dict[str, Any]]:
         return [t.schema() for t in self.tools.values()]
@@ -526,12 +527,38 @@ class AgentLoop:
                                 "content": "工具调用预算已用尽，当前调用未执行。",
                             })
                         else:
-                            tool_call_count += 1
-                            tool_executed = True
-                            run_kwargs = dict(payload)
-                            if call.name == "escalate_to_expert":
-                                run_kwargs["_should_cancel"] = should_cancel
-                            result = tool.run(**run_kwargs)
+                            circuit_decision = self.circuit_breaker.before_call(call.name)
+                            if not circuit_decision.allowed:
+                                result = tool.fail(
+                                    "工具暂时不可用，已触发熔断保护",
+                                    meta={
+                                        "circuit_state": circuit_decision.state,
+                                        "retry_after_seconds": circuit_decision.retry_after_seconds,
+                                    },
+                                )
+                                trace.append({
+                                    "step": turn,
+                                    "type": "loop_guard",
+                                    "reason": "tool_circuit_open",
+                                    "tool": call.name,
+                                    "plan_step": current_plan_step.id if current_plan_step else None,
+                                    "retry_after_seconds": circuit_decision.retry_after_seconds,
+                                    "action": "replan_or_handoff",
+                                    "content": "工具处于熔断冷却期，当前调用未执行。",
+                                })
+                            else:
+                                tool_call_count += 1
+                                tool_executed = True
+                                if self.circuit_breaker.should_inject_failure(call.name):
+                                    result = tool.fail(
+                                        "模拟下游服务不可用",
+                                        meta={"demo_failure_injected": True},
+                                    )
+                                else:
+                                    run_kwargs = dict(payload)
+                                    if call.name == "escalate_to_expert":
+                                        run_kwargs["_should_cancel"] = should_cancel
+                                    result = tool.run(**run_kwargs)
                 except Exception as exc:  # 工具异常转成观测结果回填,让模型自行纠错
                     result = {
                         "ok": False,
@@ -570,6 +597,18 @@ class AgentLoop:
 
                 cycle_decision = None
                 if tool_executed and isinstance(result, dict):
+                    circuit_event = self.circuit_breaker.record(call.name, result_ok)
+                    if circuit_event:
+                        trace.append({
+                            "step": turn,
+                            "type": "loop_guard",
+                            "reason": circuit_event.reason,
+                            "tool": call.name,
+                            "plan_step": current_plan_step.id if current_plan_step else None,
+                            "consecutive_failures": circuit_event.consecutive_failures,
+                            "action": "replan_or_handoff" if result_ok is False else "continue",
+                            "content": "工具熔断状态已恢复。" if result_ok else "工具连续异常，已更新熔断状态。",
+                        })
                     cycle_decision = cycle_guard.record(call.name, payload, result, result_count)
                     if cycle_decision:
                         trace.append({
