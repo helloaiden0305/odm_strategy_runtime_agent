@@ -388,6 +388,25 @@ class AgentLoop:
             if cancelled():
                 return cancelled_result()
 
+            try:
+                decision = decision.validate_contract()
+            except ValueError as exc:
+                trace.append({
+                    "step": turn,
+                    "type": "decision_guard",
+                    "reason": "invalid_decision_contract",
+                    "plan_step": current_plan_step.id if current_plan_step else None,
+                    "action": "replan_or_handoff",
+                    "content": "模型 Turn 决策不符合结构约定，当前步骤受阻。",
+                    "error": str(exc),
+                })
+                if current_plan_step:
+                    self._set_plan_state(
+                        trace, turn, current_plan_step, "blocked",
+                        "模型 Turn 决策不符合结构约定。",
+                    )
+                continue
+
             # ② LLM 返回后:记录模型原始决策(调试"模型决定做什么")
             trace.append({"step": turn, "type": "llm_response",
                           "decision": decision.type,

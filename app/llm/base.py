@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .. import config
 
@@ -39,6 +39,28 @@ class LLMDecision:
     tool_calls: list[ToolCall] = field(default_factory=list)
     content: Optional[str] = None
 
+    def validate_contract(self) -> "LLMDecision":
+        """校验 Provider 归一化后的 Turn 决策，拒绝未知动作和不完整输出。"""
+        try:
+            validated = AgentDecision.model_validate({
+                "type": self.type,
+                "decision_reason": self.thought,
+                "tool_calls": [
+                    {"id": call.id, "name": call.name, "input": call.input}
+                    for call in self.tool_calls
+                ],
+                "content": self.content,
+            })
+        except ValidationError as exc:
+            raise ValueError("Turn 决策结构不符合约定") from exc
+        return LLMDecision(
+            type=validated.type,
+            thought=validated.decision_reason,
+            tool_calls=[ToolCall(id=call.id, name=call.name, input=call.input)
+                        for call in validated.tool_calls],
+            content=validated.content,
+        )
+
 
 class _PlannerSchema(BaseModel):
     """Planner 输入输出共用的严格 Schema 基类。"""
@@ -47,6 +69,37 @@ class _PlannerSchema(BaseModel):
         str_strip_whitespace=True,
         validate_assignment=True,
     )
+
+
+class DecisionToolCall(_PlannerSchema):
+    """单次 Turn 中模型请求的工具调用结构。"""
+    id: str = Field(..., min_length=1, max_length=128)
+    name: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    input: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentDecision(_PlannerSchema):
+    """受控 Agent Turn 的最小决策契约，不暴露完整思维链。"""
+    type: Literal["tool_call", "final"]
+    decision_reason: str = Field(..., min_length=1, max_length=240)
+    tool_calls: list[DecisionToolCall] = Field(default_factory=list, max_length=4)
+    content: str | None = Field(default=None, max_length=8000)
+
+    @model_validator(mode="after")
+    def validate_action_shape(self) -> "AgentDecision":
+        if self.type == "tool_call" and not self.tool_calls:
+            raise ValueError("tool_call 决策必须包含至少一个工具调用")
+        if self.type == "final":
+            if self.tool_calls:
+                raise ValueError("final 决策不能携带工具调用")
+            if not (self.content or "").strip():
+                raise ValueError("final 决策必须包含回复内容")
+        return self
+
+    @classmethod
+    def decision_json_schema(cls) -> dict[str, Any]:
+        """供文档与兼容 Provider 使用的 Turn 决策 JSON Schema。"""
+        return cls.model_json_schema()
 
 
 class PlanStep(_PlannerSchema):

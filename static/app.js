@@ -286,7 +286,7 @@ function tracePhase(item) {
   if (item.type === "plan_guard") {
     return { key: "plan_guard", label: "计划校验" };
   }
-  if (["plan_state", "llm_call", "llm_response", "think", "tool_call", "tool_result", "loop_guard"].includes(item.type)) {
+  if (["plan_state", "llm_call", "llm_response", "think", "tool_call", "tool_result", "decision_guard", "loop_guard"].includes(item.type)) {
     return { key: "execute", label: "受控执行" };
   }
   if (item.type === "replan") {
@@ -329,6 +329,7 @@ function renderTrace(trace) {
     replan: "重规划",
     final_guard: "收尾校验",
     guard_forced_finish: "受控兜底",
+    decision_guard: "决策校验",
     loop_guard: "循环护栏",
     cancelled: "运行已中止",
   };
@@ -432,6 +433,11 @@ function renderTrace(trace) {
       if (s.retry_after_seconds) details.push(`预计恢复=${s.retry_after_seconds} 秒`);
       if (s.action) details.push(`后续=${s.action}`);
       if (details.length) inner += `<div class="sub">${escapeHtml(details.join(" · "))}</div>`;
+    }
+
+    if (s.type === "decision_guard") {
+      inner += `<div class="sub">原因:模型决策不符合 Turn Contract</div>`;
+      if (s.action) inner += `<div class="sub">后续:${escapeHtml(s.action)}</div>`;
     }
 
     if (s.plan_step && s.type !== "plan_state") {
