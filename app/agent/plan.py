@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .. import config
 from ..llm.base import AgentPlan, PlanStep
 
 
 _ALLOWED_STATUSES = {"pending", "running", "completed", "blocked", "skipped"}
-_MAX_STEPS = 3
 _MAX_TEXT_LENGTH = 160
 
 
@@ -57,8 +57,8 @@ def validate_plan(plan: AgentPlan, available_tools: set[str]) -> PlanGuardResult
         reasons.append("缺少计划目标")
     if not plan.decision_reason.strip():
         reasons.append("缺少决策摘要")
-    if len(plan.steps) < 1 or len(plan.steps) > _MAX_STEPS:
-        reasons.append("计划步骤数量必须为 1 到 3")
+    if len(plan.steps) < 1 or len(plan.steps) > config.MAX_PLAN_STEPS:
+        reasons.append(f"计划步骤数量必须为 1 到 {config.MAX_PLAN_STEPS}")
     if plan.steps and "recall_troubleshooting_strategy" not in plan.steps[0].allowed_tools:
         reasons.append("首步必须允许策略召回工具")
 

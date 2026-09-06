@@ -10,6 +10,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .. import config
+
 
 @dataclass
 class ToolCall:
@@ -76,7 +78,7 @@ class AgentPlan(_PlannerSchema):
     goal: str = Field(..., min_length=1, max_length=160)
     decision_reason: str = Field(..., min_length=1, max_length=160)
     evidence_gap: list[str] = Field(default_factory=list, max_length=6)
-    steps: list[PlanStep] = Field(..., min_length=1, max_length=3)
+    steps: list[PlanStep] = Field(..., min_length=1)
     replan_count: int = Field(default=0, ge=0, le=1)
 
     @field_validator("evidence_gap", mode="before")
@@ -87,6 +89,20 @@ class AgentPlan(_PlannerSchema):
         if value is None:
             return []
         return value
+
+    @field_validator("steps")
+    @classmethod
+    def limit_steps(cls, value: list[PlanStep]) -> list[PlanStep]:
+        if len(value) > config.MAX_PLAN_STEPS:
+            raise ValueError(f"steps 最多允许 {config.MAX_PLAN_STEPS} 项")
+        return value
+
+    @classmethod
+    def planner_json_schema(cls) -> dict[str, Any]:
+        """补充运行时配置上限，供真实 Planner 与本地校验使用同一约束。"""
+        schema = cls.model_json_schema()
+        schema["properties"]["steps"]["maxItems"] = config.MAX_PLAN_STEPS
+        return schema
 
     def to_dict(self) -> dict[str, Any]:
         return self.model_dump()

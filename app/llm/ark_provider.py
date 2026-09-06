@@ -27,7 +27,7 @@ class ArkLLMProvider(LLMProvider):
     def plan(self, messages: list[dict[str, Any]],
              tools: list[dict[str, Any]]) -> AgentPlan:
         tool_names = [tool["name"] for tool in tools]
-        schema = AgentPlan.model_json_schema()
+        schema = AgentPlan.planner_json_schema()
         planner_prompt = (
             "你是 ODM 问题排查运行时的 Planner。只输出符合 JSON Schema 的 JSON 对象，不要 Markdown。"
             "decision_reason 是一两句审计摘要，不是完整思维链。首步 allowed_tools 必须包含 "

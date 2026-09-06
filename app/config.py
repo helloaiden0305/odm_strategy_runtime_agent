@@ -16,6 +16,9 @@ DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "data_odm_demo.db")))
 MAX_LOOP_STEPS = 6          # 单次对话内最多循环步数,防死循环
 LOOP_TIMEOUT_SECONDS = 30   # 单次对话超时
 MAX_PLAN_REPLANS = 1         # 单次运行最多一次重规划,避免规划空转
+MAX_PLAN_STEPS = int(os.getenv("MAX_PLAN_STEPS", "3"))
+if not 3 <= MAX_PLAN_STEPS <= MAX_LOOP_STEPS:
+    raise ValueError("MAX_PLAN_STEPS 必须介于 3 和 MAX_LOOP_STEPS 之间")
 
 # 知识库检索:命中阈值(余弦相似度),低于此值视为"未命中"
 KB_HIT_THRESHOLD = 0.45
