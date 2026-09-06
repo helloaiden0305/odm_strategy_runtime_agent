@@ -19,12 +19,15 @@ AGENT_RUN_TIMEOUT_SECONDS = float(
 )
 MAX_PLAN_REPLANS = 1         # 单次运行最多一次重规划,避免规划空转
 MAX_PLAN_STEPS = int(os.getenv("MAX_PLAN_STEPS", "3"))
+MAX_TOOL_CALLS_PER_RUN = int(os.getenv("MAX_TOOL_CALLS_PER_RUN", "8"))
 if MAX_AGENT_TURNS < 1:
     raise ValueError("MAX_AGENT_TURNS 必须至少为 1")
 if AGENT_RUN_TIMEOUT_SECONDS <= 0:
     raise ValueError("AGENT_RUN_TIMEOUT_SECONDS 必须大于 0")
 if MAX_PLAN_STEPS < 3:
     raise ValueError("MAX_PLAN_STEPS 必须至少为 3，以覆盖安全默认计划")
+if MAX_TOOL_CALLS_PER_RUN < 1:
+    raise ValueError("MAX_TOOL_CALLS_PER_RUN 必须至少为 1")
 
 # 知识库检索:命中阈值(余弦相似度),低于此值视为"未命中"
 KB_HIT_THRESHOLD = 0.45

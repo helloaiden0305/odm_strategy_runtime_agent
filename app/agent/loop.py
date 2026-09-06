@@ -311,6 +311,7 @@ class AgentLoop:
 
         started = time.time()
         turn = 0
+        tool_call_count = 0
         reply = "抱歉,系统繁忙,请稍后再试。"
         run_status = "completed"
 
@@ -502,7 +503,27 @@ class AgentLoop:
                                           "tool_exists": tool_exists,
                                           "input_valid": input_valid,
                                           "error": validation_error})
+                        elif tool_call_count >= config.MAX_TOOL_CALLS_PER_RUN:
+                            result = tool.fail(
+                                "本次 Agent Run 的工具调用预算已用尽",
+                                meta={
+                                    "max_tool_calls_per_run": config.MAX_TOOL_CALLS_PER_RUN,
+                                    "tool_call_count": tool_call_count,
+                                },
+                            )
+                            trace.append({
+                                "step": turn,
+                                "type": "loop_guard",
+                                "reason": "tool_call_budget_exhausted",
+                                "tool": call.name,
+                                "plan_step": current_plan_step.id if current_plan_step else None,
+                                "tool_call_count": tool_call_count,
+                                "max_tool_calls_per_run": config.MAX_TOOL_CALLS_PER_RUN,
+                                "action": "replan_or_handoff",
+                                "content": "工具调用预算已用尽，当前调用未执行。",
+                            })
                         else:
+                            tool_call_count += 1
                             run_kwargs = dict(payload)
                             if call.name == "escalate_to_expert":
                                 run_kwargs["_should_cancel"] = should_cancel
