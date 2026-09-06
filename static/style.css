@@ -87,6 +87,8 @@ main { padding: 18px 24px; }
 .trace-title { font-weight: 600; margin-bottom: 10px; }
 .trace { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
 .trace-empty { color: var(--muted); font-size: 13px; }
+.trace-run-meta { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.trace-run-meta code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #0f766e; font-size: 11px; }
 .trace-phase { display: flex; align-items: center; gap: 7px; margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--line); color: #0f766e; font-size: 12px; }
 .trace-phase:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .trace-phase span { color: var(--muted); font-size: 10px; font-weight: 700; }

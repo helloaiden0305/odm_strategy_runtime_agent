@@ -275,6 +275,11 @@ function fmtMessage(m) {
 }
 
 function tracePhase(item) {
+  if (item.type === "run_lifecycle") {
+    return ["completed", "cancelled", "forced_handoff"].includes(item.status)
+      ? { key: "finish", label: "收尾校验" }
+      : { key: "plan", label: "规划" };
+  }
   if (["planning", "plan_created", "plan_invalid"].includes(item.type)) {
     return { key: "plan", label: "规划" };
   }
@@ -309,6 +314,7 @@ function renderTrace(trace) {
     return;
   }
   const labels = {
+    run_lifecycle: "运行状态",
     llm_call: "🧠 LLM 调用(上下文)",
     llm_response: "🧠 LLM 决策",
     think: "💭 思考",
@@ -325,6 +331,13 @@ function renderTrace(trace) {
     guard_forced_finish: "受控兜底",
     cancelled: "运行已中止",
   };
+  const runId = trace.find((item) => item.run_id)?.run_id;
+  if (runId) {
+    const meta = document.createElement("div");
+    meta.className = "trace-run-meta";
+    meta.innerHTML = `<span>本次运行</span><code title="${escapeHtml(runId)}">${escapeHtml(runId)}</code>`;
+    box.appendChild(meta);
+  }
   let activePhase = null;
   trace.forEach((s) => {
     const phase = tracePhase(s);
@@ -339,7 +352,8 @@ function renderTrace(trace) {
     if (s.type === "tool_result" && s.is_error) cls += " error";
     el.className = cls;
 
-    let inner = `<div class="k">第${s.step}步 · ${labels[s.type] || s.type}${s.tool ? " · " + s.tool : ""}</div>`;
+    const turn = Number.isInteger(s.turn) ? s.turn : 0;
+    let inner = `<div class="k">第${turn}回合 · ${labels[s.type] || s.type}${s.tool ? " · " + s.tool : ""}</div>`;
 
     // ① LLM 调用:展示可用工具 + 可折叠的完整上下文(喂给模型的 messages)
     if (s.type === "llm_call") {
@@ -390,6 +404,14 @@ function renderTrace(trace) {
 
     if (s.type === "plan_state") {
       inner += `<div class="sub">${escapeHtml(s.plan_step || "步骤")} → ${escapeHtml(s.status || "unknown")}</div>`;
+    }
+
+    if (s.type === "run_lifecycle") {
+      inner += `<div class="sub">状态:${escapeHtml(s.status || "unknown")}</div>`;
+    }
+
+    if (s.plan_step && s.type !== "plan_state") {
+      inner += `<div class="sub">计划步骤:${escapeHtml(s.plan_step)}</div>`;
     }
 
     if (s.type !== "llm_call" && s.type !== "llm_response" && s.content) {
