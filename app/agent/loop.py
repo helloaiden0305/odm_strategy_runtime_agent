@@ -10,6 +10,7 @@ import copy
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from uuid import uuid4
 
 from ..llm.base import AgentPlan, LLMProvider, PlanStep
 from .. import config
@@ -20,6 +21,7 @@ from .tools import build_registry
 @dataclass
 class LoopResult:
     reply: str
+    run_id: str = ""
     trace: list[dict[str, Any]] = field(default_factory=list)
     handoff: bool = False
     ticket_id: int | None = None
@@ -35,6 +37,14 @@ class AgentLoop:
 
     def _tool_schemas(self) -> list[dict[str, Any]]:
         return [t.schema() for t in self.tools.values()]
+
+    @staticmethod
+    def _annotate_trace(trace: list[dict[str, Any]], run_id: str) -> None:
+        """在 Run 结束前统一补齐生命周期字段，避免事件遗漏。"""
+        for event in trace:
+            event["run_id"] = run_id
+            event["turn"] = event.pop("step", 0)
+            event.setdefault("plan_step", None)
 
     @staticmethod
     def _next_plan_step(plan: AgentPlan) -> PlanStep | None:
@@ -66,13 +76,13 @@ class AgentLoop:
         return enriched
 
     @staticmethod
-    def _set_plan_state(trace: list[dict[str, Any]], step_number: int,
+    def _set_plan_state(trace: list[dict[str, Any]], turn: int,
                         item: PlanStep, status: str, reason: str) -> None:
         if item.status == status:
             return
         item.status = status
         trace.append({
-            "step": step_number,
+            "step": turn,
             "type": "plan_state",
             "plan_step": item.id,
             "status": status,
@@ -140,28 +150,28 @@ class AgentLoop:
         return candidate
 
     def _replan(self, messages: list[dict[str, Any]], plan: AgentPlan,
-                reason: str, trace: list[dict[str, Any]], step_number: int) -> AgentPlan:
+                reason: str, trace: list[dict[str, Any]], turn: int) -> AgentPlan:
         schemas = self._tool_schemas()
         try:
             candidate = self.llm.replan(messages, schemas, plan, reason)
             candidate = self._merge_replanned_plan(plan, candidate)
             guard = validate_plan(candidate, set(self.tools))
-            trace.append({"step": step_number, "type": "plan_guard", "ok": guard.valid,
+            trace.append({"step": turn, "type": "plan_guard", "ok": guard.valid,
                           "replan": True, "reasons": guard.reasons,
                           "content": "重规划校验通过。" if guard.valid else "重规划校验未通过。"})
             if not guard.valid:
                 raise ValueError("; ".join(guard.reasons))
-            trace.append({"step": step_number, "type": "replan", "reason": reason,
+            trace.append({"step": turn, "type": "replan", "reason": reason,
                           "plan": candidate.to_dict(), "replan_count": candidate.replan_count,
                           "content": "已按新的 Observation 修订剩余步骤。"})
             return candidate
         except Exception as exc:
             fallback = self._merge_replanned_plan(plan, build_safe_default_plan())
             guard = validate_plan(fallback, set(self.tools))
-            trace.append({"step": step_number, "type": "plan_guard", "ok": guard.valid,
+            trace.append({"step": turn, "type": "plan_guard", "ok": guard.valid,
                           "replan": True, "fallback": True, "reasons": guard.reasons,
                           "content": "重规划不可用，改用安全默认剩余步骤。"})
-            trace.append({"step": step_number, "type": "replan", "reason": reason,
+            trace.append({"step": turn, "type": "replan", "reason": reason,
                           "plan": fallback.to_dict(), "replan_count": fallback.replan_count,
                           "fallback": True,
                           "content": f"重规划不可用，已采用安全默认步骤：{type(exc).__name__}。"})
@@ -186,7 +196,7 @@ class AgentLoop:
     def _force_expert_handoff(self, user_message: str,
                               handoff_context: dict[str, Any] | None,
                               should_cancel: Callable[[], bool] | None,
-                              trace: list[dict[str, Any]], step_number: int,
+                              trace: list[dict[str, Any]], turn: int,
                               plan_step: PlanStep | None,
                               reasons: list[str]) -> tuple[bool, int | None, str]:
         """Final Guard 无法放行时，由代码走已有的专家升级兜底。"""
@@ -195,8 +205,9 @@ class AgentLoop:
             "question": user_message,
             "context": "Final Guard 未满足：" + "；".join(reasons),
         }, handoff_context)
-        trace.append({"step": step_number, "type": "tool_call",
+        trace.append({"step": turn, "type": "tool_call",
                       "tool": "escalate_to_expert", "input": payload,
+                      "plan_step": plan_step.id if plan_step else None,
                       "tool_exists": tool is not None, "plan_allowed": True,
                       "input_valid": None, "result_ok": None, "result_count": None,
                       "forced_by_final_guard": True})
@@ -213,8 +224,9 @@ class AgentLoop:
                 result = tool.run(**validated, _should_cancel=should_cancel)
         is_error = not isinstance(result, dict) or result.get("ok") is False or bool(result.get("error"))
         ticket_id = result.get("ticket_id") if isinstance(result, dict) else None
-        trace.append({"step": step_number, "type": "tool_result",
+        trace.append({"step": turn, "type": "tool_result",
                       "tool": "escalate_to_expert", "output": result,
+                      "plan_step": plan_step.id if plan_step else None,
                       "is_error": is_error, "tool_exists": tool is not None,
                       "plan_allowed": True, "input_valid": valid,
                       "result_ok": not is_error,
@@ -222,7 +234,7 @@ class AgentLoop:
                       "forced_by_final_guard": True})
         if plan_step:
             self._set_plan_state(
-                trace, step_number, plan_step,
+                trace, turn, plan_step,
                 "completed" if not is_error else "blocked",
                 "Final Guard 触发专家升级兜底。" if not is_error else "专家升级兜底未成功。",
             )
@@ -282,7 +294,10 @@ class AgentLoop:
             history: list[dict[str, Any]] | None = None,
             system: str | None = None,
             handoff_context: dict[str, Any] | None = None,
-            should_cancel: Callable[[], bool] | None = None) -> LoopResult:
+            should_cancel: Callable[[], bool] | None = None,
+            run_id: str | None = None) -> LoopResult:
+        """执行一次完整 Agent Run，内部可包含多个 Agent Turn。"""
+        run_id = run_id or uuid4().hex
         messages: list[dict[str, Any]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -295,48 +310,58 @@ class AgentLoop:
         kb_hit = False
 
         started = time.time()
-        step = 0
+        turn = 0
         reply = "抱歉,系统繁忙,请稍后再试。"
+        run_status = "completed"
 
         def cancelled() -> bool:
             return bool(should_cancel and should_cancel())
 
-        def cancelled_result() -> LoopResult:
-            trace.append({"step": step, "type": "cancelled", "content": "(本轮策略验证已中止)"})
-            return LoopResult(reply="", trace=trace, handoff=handoff,
-                              ticket_id=ticket_id, kb_hit=kb_hit,
-                              session_messages=messages, cancelled=True)
+        def build_result(cancelled: bool = False) -> LoopResult:
+            self._annotate_trace(trace, run_id)
+            return LoopResult(reply="" if cancelled else reply, run_id=run_id,
+                              trace=trace, handoff=handoff, ticket_id=ticket_id,
+                              kb_hit=kb_hit, session_messages=messages,
+                              cancelled=cancelled)
 
+        def cancelled_result() -> LoopResult:
+            trace.append({"step": turn, "type": "run_lifecycle", "status": "cancelled",
+                          "content": "Agent Run 已中止，并清除本轮上下文。"})
+            return build_result(cancelled=True)
+
+        trace.append({"step": 0, "type": "run_lifecycle", "status": "started",
+                      "content": "Agent Run 已创建。"})
         if cancelled():
             return cancelled_result()
         plan = self._create_plan(messages, trace)
         if cancelled():
             return cancelled_result()
 
-        while step < config.MAX_LOOP_STEPS:
+        while turn < config.MAX_AGENT_TURNS:
             if cancelled():
                 return cancelled_result()
-            if time.time() - started > config.LOOP_TIMEOUT_SECONDS:
+            if time.time() - started > config.AGENT_RUN_TIMEOUT_SECONDS:
                 current_plan_step = self._next_plan_step(plan)
                 handoff, ticket_id, reply = self._force_expert_handoff(
-                    user_message, handoff_context, should_cancel, trace, step,
+                    user_message, handoff_context, should_cancel, trace, turn,
                     current_plan_step, ["运行超时，边界控制触发"],
                 )
                 if cancelled():
                     return cancelled_result()
-                trace.append({"step": step, "type": "guard_forced_finish", "content": reply,
+                trace.append({"step": turn, "type": "guard_forced_finish", "content": reply,
                               "reasons": ["运行超时，边界控制触发"]})
                 messages.append({"role": "assistant", "content": reply})
+                run_status = "forced_handoff"
                 break
 
             blocked_steps = [item for item in plan.steps if item.status == "blocked"]
             if blocked_steps and plan.replan_count < config.MAX_PLAN_REPLANS:
                 reason = "计划步骤受阻: " + ", ".join(item.id for item in blocked_steps)
-                plan = self._replan(messages, plan, reason, trace, step)
+                plan = self._replan(messages, plan, reason, trace, turn)
                 if cancelled():
                     return cancelled_result()
 
-            step += 1
+            turn += 1
             current_plan_step = self._next_plan_step(plan)
             all_schemas = self._tool_schemas()
             schemas = [
@@ -345,11 +370,11 @@ class AgentLoop:
                 and schema["name"] in current_plan_step.allowed_tools
             ]
             if current_plan_step is not None and current_plan_step.status == "pending":
-                self._set_plan_state(trace, step, current_plan_step, "running", "开始执行当前计划步骤。")
+                self._set_plan_state(trace, turn, current_plan_step, "running", "开始执行当前计划步骤。")
             model_messages = self._with_plan_context(messages, plan, current_plan_step)
 
             # ① LLM 调用前:记录本步喂给模型的完整上下文(调试"上下文是什么")
-            trace.append({"step": step, "type": "llm_call",
+            trace.append({"step": turn, "type": "llm_call",
                           "messages": copy.deepcopy(model_messages),
                           "available_tools": [t["name"] for t in schemas],
                           "plan_step": current_plan_step.id if current_plan_step else None})
@@ -360,52 +385,58 @@ class AgentLoop:
                 return cancelled_result()
 
             # ② LLM 返回后:记录模型原始决策(调试"模型决定做什么")
-            trace.append({"step": step, "type": "llm_response",
+            trace.append({"step": turn, "type": "llm_response",
                           "decision": decision.type,
                           "thought": decision.thought,
+                          "plan_step": current_plan_step.id if current_plan_step else None,
                           "tool_calls": [{"id": c.id, "name": c.name, "input": c.input}
                                          for c in decision.tool_calls],
                           "content": decision.content})
 
             # 记录"思考"
             if decision.thought:
-                trace.append({"step": step, "type": "think",
+                trace.append({"step": turn, "type": "think",
+                              "plan_step": current_plan_step.id if current_plan_step else None,
                               "content": decision.thought})
 
             if decision.type == "final":
                 if cancelled():
                     return cancelled_result()
                 guard_reasons = self._final_guard_reasons(plan, current_plan_step)
-                trace.append({"step": step, "type": "final_guard", "ok": not guard_reasons,
+                trace.append({"step": turn, "type": "final_guard", "ok": not guard_reasons,
+                              "plan_step": current_plan_step.id if current_plan_step else None,
                               "reasons": guard_reasons,
                               "content": "最终回复满足计划与证据门禁。" if not guard_reasons
                               else "最终回复尚未满足计划与证据门禁。"})
                 if guard_reasons and plan.replan_count < config.MAX_PLAN_REPLANS:
                     plan = self._replan(
                         messages, plan, "Final Guard 拒绝直接收尾: " + "；".join(guard_reasons),
-                        trace, step,
+                        trace, turn,
                     )
                     if cancelled():
                         return cancelled_result()
                     continue
                 if guard_reasons:
                     handoff, ticket_id, reply = self._force_expert_handoff(
-                        user_message, handoff_context, should_cancel, trace, step,
+                        user_message, handoff_context, should_cancel, trace, turn,
                         current_plan_step, guard_reasons,
                     )
                     if cancelled():
                         return cancelled_result()
-                    trace.append({"step": step, "type": "guard_forced_finish", "content": reply,
+                    trace.append({"step": turn, "type": "guard_forced_finish", "content": reply,
                                   "reasons": guard_reasons})
                     messages.append({"role": "assistant", "content": reply})
+                    run_status = "forced_handoff"
                     break
                 reply = decision.content or ""
                 if current_plan_step:
                     self._set_plan_state(
-                        trace, step, current_plan_step, "completed",
+                        trace, turn, current_plan_step, "completed",
                         "Final Guard 已允许以当前证据收尾。",
                     )
-                trace.append({"step": step, "type": "final", "content": reply})
+                trace.append({"step": turn, "type": "final",
+                              "plan_step": current_plan_step.id if current_plan_step else None,
+                              "content": reply})
                 messages.append({"role": "assistant", "content": reply})
                 break
 
@@ -432,8 +463,9 @@ class AgentLoop:
                 payload: dict[str, Any] = {}
                 tool_input = self._enhance_handoff_input(call.input or {}, handoff_context) \
                     if call.name == "escalate_to_expert" else (call.input or {})
-                trace.append({"step": step, "type": "tool_call",
+                trace.append({"step": turn, "type": "tool_call",
                               "tool": call.name, "input": tool_input,
+                              "plan_step": current_plan_step.id if current_plan_step else None,
                               "tool_exists": tool_exists,
                               "plan_allowed": plan_allowed,
                               "input_valid": None,
@@ -463,8 +495,9 @@ class AgentLoop:
                                 validation_error["message"],
                                 meta={"validation_error": validation_error},
                             )
-                            trace.append({"step": step, "type": "tool_validation_error",
+                            trace.append({"step": turn, "type": "tool_validation_error",
                                           "tool": call.name,
+                                          "plan_step": current_plan_step.id if current_plan_step else None,
                                           "input": tool_input,
                                           "tool_exists": tool_exists,
                                           "input_valid": input_valid,
@@ -498,8 +531,9 @@ class AgentLoop:
                 )
                 result_ok = not is_error
                 result_count = self._result_count(result) if isinstance(result, dict) else 0
-                trace.append({"step": step, "type": "tool_result",
+                trace.append({"step": turn, "type": "tool_result",
                               "tool": call.name, "output": result,
+                              "plan_step": current_plan_step.id if current_plan_step else None,
                               "is_error": is_error,
                               "tool_exists": tool_exists,
                               "plan_allowed": plan_allowed,
@@ -516,30 +550,32 @@ class AgentLoop:
                 if current_plan_step and plan_allowed:
                     if result_ok:
                         self._set_plan_state(
-                            trace, step, current_plan_step, "completed",
+                            trace, turn, current_plan_step, "completed",
                             "已获得当前步骤的工具 Observation。",
                         )
                     else:
                         self._set_plan_state(
-                            trace, step, current_plan_step, "blocked",
+                            trace, turn, current_plan_step, "blocked",
                             "当前步骤的工具调用未能产生可用 Observation。",
                         )
         else:
-            # while 正常结束(达到最大步数仍未 final)
+            # while 正常结束(达到最大 Agent Turn 仍未 final)
             current_plan_step = self._next_plan_step(plan)
             handoff, ticket_id, reply = self._force_expert_handoff(
-                user_message, handoff_context, should_cancel, trace, step,
+                user_message, handoff_context, should_cancel, trace, turn,
                 current_plan_step, ["达到最大循环步数，边界控制触发"],
             )
             if cancelled():
                 return cancelled_result()
-            trace.append({"step": step, "type": "guard_forced_finish", "content": reply,
-                          "reasons": ["达到最大循环步数，边界控制触发"]})
+            trace.append({"step": turn, "type": "guard_forced_finish", "content": reply,
+                          "reasons": ["达到最大 Agent Turn，边界控制触发"]})
             messages.append({"role": "assistant", "content": reply})
+            run_status = "forced_handoff"
 
         if cancelled():
             return cancelled_result()
 
-        return LoopResult(reply=reply, trace=trace, handoff=handoff,
-                          ticket_id=ticket_id, kb_hit=kb_hit,
-                          session_messages=messages)
+        trace.append({"step": turn, "type": "run_lifecycle", "status": run_status,
+                      "content": "Agent Run 已完成。" if run_status == "completed"
+                      else "Agent Run 已由受控兜底结束。"})
+        return build_result()

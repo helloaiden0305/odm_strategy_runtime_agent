@@ -12,13 +12,19 @@ load_dotenv(BASE_DIR / ".env")
 
 DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "data_odm_demo.db")))
 
-# Agent Loop 边界控制
-MAX_LOOP_STEPS = 6          # 单次对话内最多循环步数,防死循环
-LOOP_TIMEOUT_SECONDS = 30   # 单次对话超时
+# Agent Run 边界控制。旧环境变量仅用于平滑升级,新配置以 Agent Run / Turn 为准。
+MAX_AGENT_TURNS = int(os.getenv("MAX_AGENT_TURNS", os.getenv("MAX_LOOP_STEPS", "6")))
+AGENT_RUN_TIMEOUT_SECONDS = float(
+    os.getenv("AGENT_RUN_TIMEOUT_SECONDS", os.getenv("LOOP_TIMEOUT_SECONDS", "30"))
+)
 MAX_PLAN_REPLANS = 1         # 单次运行最多一次重规划,避免规划空转
 MAX_PLAN_STEPS = int(os.getenv("MAX_PLAN_STEPS", "3"))
-if not 3 <= MAX_PLAN_STEPS <= MAX_LOOP_STEPS:
-    raise ValueError("MAX_PLAN_STEPS 必须介于 3 和 MAX_LOOP_STEPS 之间")
+if MAX_AGENT_TURNS < 1:
+    raise ValueError("MAX_AGENT_TURNS 必须至少为 1")
+if AGENT_RUN_TIMEOUT_SECONDS <= 0:
+    raise ValueError("AGENT_RUN_TIMEOUT_SECONDS 必须大于 0")
+if MAX_PLAN_STEPS < 3:
+    raise ValueError("MAX_PLAN_STEPS 必须至少为 3，以覆盖安全默认计划")
 
 # 知识库检索:命中阈值(余弦相似度),低于此值视为"未命中"
 KB_HIT_THRESHOLD = 0.45

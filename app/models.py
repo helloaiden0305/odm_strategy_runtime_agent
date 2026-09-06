@@ -10,6 +10,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    run_id: str
     reply: str
     handoff: bool = False          # 本次是否升级测试专家
     ticket_id: Optional[int] = None

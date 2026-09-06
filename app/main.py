@@ -31,6 +31,7 @@ def chat(req: ChatRequest) -> ChatResponse:
         req.run_id,
     )
     return ChatResponse(
+        run_id=result.run_id,
         reply=result.reply,
         handoff=result.handoff,
         ticket_id=result.ticket_id,

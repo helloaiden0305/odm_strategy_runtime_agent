@@ -170,15 +170,16 @@ def handle_chat(message: str, session_id: str = "demo",
         system=effective_system_prompt(),
         handoff_context=handoff_context,
         should_cancel=lambda: _is_run_cancelled(session_id, run_id),
+        run_id=run_id,
     )
 
     if result.cancelled or _is_run_cancelled(session_id, run_id):
         _finish_cancelled_run(session_id, run_id, result.ticket_id)
-        return LoopResult(reply="", trace=[], cancelled=True)
+        return LoopResult(reply="", trace=[], cancelled=True, run_id=run_id)
 
     if not _persist_completed_run(session_id, run_id, message, result):
         _finish_cancelled_run(session_id, run_id, result.ticket_id)
-        return LoopResult(reply="", trace=[], cancelled=True)
+        return LoopResult(reply="", trace=[], cancelled=True, run_id=run_id)
     return result
 
 
