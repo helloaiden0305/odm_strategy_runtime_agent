@@ -286,7 +286,7 @@ function tracePhase(item) {
   if (item.type === "plan_guard") {
     return { key: "plan_guard", label: "计划校验" };
   }
-  if (["plan_state", "llm_call", "llm_response", "think", "tool_call", "tool_result"].includes(item.type)) {
+  if (["plan_state", "llm_call", "llm_response", "think", "tool_call", "tool_result", "loop_guard"].includes(item.type)) {
     return { key: "execute", label: "受控执行" };
   }
   if (item.type === "replan") {
@@ -329,6 +329,7 @@ function renderTrace(trace) {
     replan: "重规划",
     final_guard: "收尾校验",
     guard_forced_finish: "受控兜底",
+    loop_guard: "循环护栏",
     cancelled: "运行已中止",
   };
   const runId = trace.find((item) => item.run_id)?.run_id;
@@ -408,6 +409,29 @@ function renderTrace(trace) {
 
     if (s.type === "run_lifecycle") {
       inner += `<div class="sub">状态:${escapeHtml(s.status || "unknown")}</div>`;
+    }
+
+    if (s.type === "loop_guard") {
+      const guardReasons = {
+        tool_call_budget_exhausted: "工具调用预算已用尽",
+        repeated_tool_cycle_without_new_evidence: "重复链路未产生新证据",
+        cycle_information_gain: "重复链路获得新证据，继续执行",
+        tool_circuit_open: "工具处于熔断冷却期",
+        tool_circuit_opened: "工具连续异常，熔断已打开",
+        tool_circuit_reopened: "半开试探失败，熔断重新打开",
+        tool_circuit_recovered: "半开试探成功，工具已恢复",
+      };
+      inner += `<div class="sub">原因:${escapeHtml(guardReasons[s.reason] || s.reason || "运行时护栏")}</div>`;
+      const details = [];
+      if (s.pattern_length) details.push(`循环长度=${s.pattern_length}`);
+      if (s.repeat_count) details.push(`重复次数=${s.repeat_count}`);
+      if (s.information_gain !== undefined) details.push(`信息增量=${s.information_gain}`);
+      if (s.tool_call_count !== undefined) details.push(`已执行工具=${s.tool_call_count}`);
+      if (s.max_tool_calls_per_run !== undefined) details.push(`工具预算=${s.max_tool_calls_per_run}`);
+      if (s.consecutive_failures !== undefined) details.push(`连续失败=${s.consecutive_failures}`);
+      if (s.retry_after_seconds) details.push(`预计恢复=${s.retry_after_seconds} 秒`);
+      if (s.action) details.push(`后续=${s.action}`);
+      if (details.length) inner += `<div class="sub">${escapeHtml(details.join(" · "))}</div>`;
     }
 
     if (s.plan_step && s.type !== "plan_state") {
