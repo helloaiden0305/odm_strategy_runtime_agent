@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from ..llm.base import AgentPlan, LLMProvider, PlanStep
 from .. import config
+from .loop_guard import RunCycleGuard
 from .plan import build_safe_default_plan, validate_plan
 from .tools import build_registry
 
@@ -312,6 +313,7 @@ class AgentLoop:
         started = time.time()
         turn = 0
         tool_call_count = 0
+        cycle_guard = RunCycleGuard()
         reply = "抱歉,系统繁忙,请稍后再试。"
         run_status = "completed"
 
@@ -460,6 +462,7 @@ class AgentLoop:
                     and call.name in current_plan_step.allowed_tools
                 )
                 input_valid = False
+                tool_executed = False
                 validation_error: dict[str, Any] | None = None
                 payload: dict[str, Any] = {}
                 tool_input = self._enhance_handoff_input(call.input or {}, handoff_context) \
@@ -524,6 +527,7 @@ class AgentLoop:
                             })
                         else:
                             tool_call_count += 1
+                            tool_executed = True
                             run_kwargs = dict(payload)
                             if call.name == "escalate_to_expert":
                                 run_kwargs["_should_cancel"] = should_cancel
@@ -564,12 +568,30 @@ class AgentLoop:
                 messages.append({"role": "tool", "tool_call_id": call.id,
                                  "name": call.name, "result": result})
 
+                cycle_decision = None
+                if tool_executed and isinstance(result, dict):
+                    cycle_decision = cycle_guard.record(call.name, payload, result, result_count)
+                    if cycle_decision:
+                        trace.append({
+                            "step": turn,
+                            "type": "loop_guard",
+                            "reason": cycle_decision.reason,
+                            "tool": call.name,
+                            "plan_step": current_plan_step.id if current_plan_step else None,
+                            "pattern_length": cycle_decision.pattern_length,
+                            "repeat_count": cycle_decision.repeat_count,
+                            "information_gain": cycle_decision.information_gain,
+                            "action": "continue" if cycle_decision.information_gain else "replan_or_handoff",
+                            "content": "重复链路获得新证据，继续执行。" if cycle_decision.information_gain
+                            else "重复链路未产生新证据，当前路线受阻。",
+                        })
+
                 # 旁路记录关键信号(用于指标与返回)
                 if call.name == "recall_troubleshooting_strategy" and isinstance(result, dict):
                     kb_hit = kb_hit or bool(result.get("count"))
 
                 if current_plan_step and plan_allowed:
-                    if result_ok:
+                    if result_ok and not (cycle_decision and not cycle_decision.information_gain):
                         self._set_plan_state(
                             trace, turn, current_plan_step, "completed",
                             "已获得当前步骤的工具 Observation。",
@@ -577,7 +599,9 @@ class AgentLoop:
                     else:
                         self._set_plan_state(
                             trace, turn, current_plan_step, "blocked",
-                            "当前步骤的工具调用未能产生可用 Observation。",
+                            "重复链路未产生新证据，当前路线受阻。"
+                            if cycle_decision and not cycle_decision.information_gain
+                            else "当前步骤的工具调用未能产生可用 Observation。",
                         )
         else:
             # while 正常结束(达到最大 Agent Turn 仍未 final)
