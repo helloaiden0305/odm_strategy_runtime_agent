@@ -740,23 +740,34 @@ function renderSampleCard(s) {
     <textarea class="s-n" placeholder="策略原因 / 触发条件">${escapeHtml(s.note || "")}</textarea>
     <div class="meta">#${s.id} · ${srcLabel(s.source)} · ${escapeHtml(s.created_at || "")}</div>
     <div class="actions">
-      <button class="btn-ok">保存修改</button>
+      <button class="btn-ok" disabled>已保存</button>
       <button class="btn-reject">删除</button>
     </div>`;
   const [save, remove] = c.querySelectorAll("button");
+  const fields = c.querySelectorAll(".s-q, .s-a, .s-n");
+  let dirty = false;
+  const markDirty = () => {
+    if (dirty) return;
+    dirty = true;
+    save.disabled = false;
+    save.textContent = "保存修改";
+  };
+  fields.forEach((field) => field.addEventListener("input", markDirty));
+
   save.onclick = async () => {
+    if (!dirty) return;
     save.disabled = true;
     const res = await put(`/api/playbook/${s.id}`, {
       question: c.querySelector(".s-q").value.trim(),
       answer: c.querySelector(".s-a").value.trim(),
       note: c.querySelector(".s-n").value.trim(),
     });
-    save.disabled = false;
     if (res && res.ok) {
-      save.textContent = "已保存至样本库 ✓";
+      dirty = false;
+      save.textContent = "已保存";
       showNotice("已更新策略样本库；下次重新归纳时会纳入候选总纲。");
-      setTimeout(() => { save.textContent = "保存修改"; }, 1800);
     } else {
+      save.disabled = false;
       alert("保存失败,请重试");
     }
   };
