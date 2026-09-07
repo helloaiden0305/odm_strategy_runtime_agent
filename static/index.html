@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>XZY ODM 问题排查策略自进化平台</title>
-  <link rel="stylesheet" href="/static/style.css?v=21" />
+  <link rel="stylesheet" href="/static/style.css?v=22" />
 </head>
 <body>
   <div class="app-notice" id="app-notice" role="status" aria-live="polite"></div>
@@ -118,8 +118,12 @@
       <div class="review-col">
         <div class="review-head">
           <h3>策略样本库</h3>
-          <p>查看、编辑、删除已经沉淀的专家教学、专家纠错和工单复盘策略样本。</p>
+          <p>在这里完成工单复盘，并管理已经沉淀的专家教学、专家纠错和工单复盘策略样本。</p>
           <p class="sample-library-status" id="sample-library-status">样本用于后续策略总纲归纳；保存修改不会自动改写已确认总纲。</p>
+        </div>
+        <div class="sample-group sample-pending">
+          <div class="sample-group-head">待沉淀的复盘工单 <span class="tag-mini">尚未保存为策略样本，不参与归纳</span> <span class="grp-count" id="cnt-pending-ticket">0</span></div>
+          <div id="pending-tickets" class="cards"></div>
         </div>
         <div class="sample-stats" aria-label="策略样本统计">
           <div class="sample-stat">
@@ -148,7 +152,7 @@
           <div id="samples-refine" class="cards"></div>
         </div>
         <div class="sample-group">
-          <div class="sample-group-head">工单复盘 <span class="tag-mini">从升级工单复盘沉淀</span> <span class="grp-count" id="cnt-ticket">0</span></div>
+          <div class="sample-group-head">已沉淀的工单复盘 <span class="tag-mini">完成复盘后保存的策略样本</span> <span class="grp-count" id="cnt-ticket">0</span></div>
           <div id="samples-ticket" class="cards"></div>
         </div>
       </div>
@@ -171,16 +175,9 @@
         </div>
       </div>
 
-      <div class="review-col">
-        <div class="review-head">
-          <h3>待复盘工单</h3>
-          <p>Agent 无法确认、证据不足或高风险问题会进入这里,等待测试专家复盘。</p>
-        </div>
-        <div id="tickets" class="cards"></div>
-      </div>
     </section>
   </main>
 
-  <script src="/static/app.js?v=22"></script>
+  <script src="/static/app.js?v=23"></script>
 </body>
 </html>

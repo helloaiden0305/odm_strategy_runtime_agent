@@ -47,7 +47,7 @@ document.querySelectorAll(".tab").forEach((t) => {
     document.querySelectorAll(".panel").forEach((x) => x.classList.remove("active"));
     t.classList.add("active");
     $("#tab-" + t.dataset.tab).classList.add("active");
-    if (t.dataset.tab === "review") loadReview();
+    if (t.dataset.tab === "review") loadDirective();
     if (t.dataset.tab === "samples") loadSamples();
     refreshMetrics();
   });
@@ -670,13 +670,12 @@ $("#save-directive").addEventListener("click", async () => {
   setTimeout(() => (btn.textContent = old), 1500);
 });
 
-// ---------- 后台:工单 + 策略样本库管理 ----------
-async function loadReview() {
-  loadDirective();
-  // 工单
+// ---------- 策略样本库：待沉淀工单 + 已沉淀样本 ----------
+async function loadPendingTickets() {
   const tickets = await api("/api/tickets?status=open");
-  const tbox = $("#tickets");
-  tbox.innerHTML = tickets.length ? "" : '<div class="empty">暂无待专家复盘的问题。</div>';
+  const tbox = $("#pending-tickets");
+  $("#cnt-pending-ticket").textContent = tickets.length;
+  tbox.innerHTML = tickets.length ? "" : '<div class="empty">暂无待沉淀的复盘工单。</div>';
   tickets.forEach((t) => {
     const c = document.createElement("div");
     c.className = "card";
@@ -694,7 +693,7 @@ async function loadReview() {
       if (!ans.value.trim()) return alert("请先填写建议排查路径");
       const result = await post(`/api/tickets/${t.id}/teach`, { answer: ans.value.trim(), note: note.value.trim() });
       showNotice(result.message || "已保存至策略样本库，可用于后续策略总纲归纳。");
-      loadReview(); refreshMetrics();
+      loadSamples(); refreshMetrics();
     };
     tbox.appendChild(c);
   });
@@ -728,6 +727,7 @@ async function loadSamples() {
     g.box.innerHTML = items.length ? "" : emptyHint[key];
     items.forEach((s) => g.box.appendChild(renderSampleCard(s)));
   });
+  await loadPendingTickets();
 }
 
 // 渲染一张可编辑/删除的策略样本卡片
@@ -775,7 +775,7 @@ function renderSampleCard(s) {
     if (!confirm("确定删除这条策略样本?")) return;
     await del(`/api/playbook/${s.id}`);
     showNotice("已从策略样本库删除；后续归纳将不再使用该样本。");
-    loadSamples(); loadReview(); refreshMetrics();
+    loadSamples(); refreshMetrics();
   };
   return c;
 }

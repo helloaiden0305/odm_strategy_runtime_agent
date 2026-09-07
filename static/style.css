@@ -165,6 +165,8 @@ main { padding: 18px 24px; }
 /* 策略样本库分组 */
 .sample-group { margin-bottom: 16px; }
 .sample-group:last-child { margin-bottom: 0; }
+.sample-pending .sample-group-head { color: #9a3412; }
+.sample-pending .grp-count { color: #9a3412; background: #ffedd5; }
 .sample-group-head {
   display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700;
   color: #334155; padding: 6px 0 8px; border-bottom: 1px solid var(--line); margin-bottom: 10px;
