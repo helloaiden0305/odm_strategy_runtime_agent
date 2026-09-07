@@ -541,6 +541,11 @@ async function refreshMetrics() {
 }
 
 // ---------- AI 归纳的排查策略总纲 ----------
+function renderSummaryState(result) {
+  const state = result.summary_status;
+  $("#sum-state").textContent = state === "expert_confirmed" ? "专家已确认" : "AI 草稿";
+}
+
 $("#summary-btn").addEventListener("click", async () => {
   $("#sum-text").value = "";
   $("#sum-text").placeholder = "AI 正在归纳排查策略总纲……";
@@ -548,17 +553,20 @@ $("#summary-btn").addEventListener("click", async () => {
   $("#sum-modal").classList.add("show");
   const r = await api("/api/playbook/summary");
   $("#sum-text").value = r.summary || "";
+  renderSummaryState(r);
 });
 $("#sum-save").addEventListener("click", async () => {
-  await put("/api/playbook/summary", { text: $("#sum-text").value });
-  $("#sum-status").textContent = "已保存 ✓";
+  const r = await put("/api/playbook/summary", { text: $("#sum-text").value });
+  renderSummaryState(r);
+  $("#sum-status").textContent = "已保存为专家确认版本 ✓";
   setTimeout(() => ($("#sum-status").textContent = ""), 1500);
 });
 $("#sum-regen").addEventListener("click", async () => {
   $("#sum-status").textContent = "AI 正在合并归纳(保留你的改写)……";
   const r = await post("/api/playbook/summary/regenerate");
   $("#sum-text").value = r.summary || "";
-  $("#sum-status").textContent = "已重新归纳 ✓";
+  renderSummaryState(r);
+  $("#sum-status").textContent = r.message || "已重新归纳 ✓";
   setTimeout(() => ($("#sum-status").textContent = ""), 1500);
 });
 $("#sum-close").addEventListener("click", () => $("#sum-modal").classList.remove("show"));

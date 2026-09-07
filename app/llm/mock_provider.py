@@ -17,6 +17,10 @@ from .. import config
 _HANDOFF_RE = re.compile(r"(升级测试专家|升级专家|判断不了|看不准|人工判断|转专家|专家)")
 _SOP_RE = re.compile(r"(怎么排查|下一步|刷机|OTA|ota|蓝牙|日志|logcat|bt_stack|traces|稳定性|压测|卡死|ANR|anr|复现|固件)")
 _CASE_RE = re.compile(r"(案例|历史缺陷|类似问题|量产|试产|根因|处理记录|bug|BUG|缺陷)")
+_CONFIRMED_SUMMARY_RE = re.compile(
+    r"【专家确认保护基底\(必须原样保留\)】[:：]?\s*(.*?)\n\n【全部策略样本】",
+    re.S,
+)
 
 
 def _call(name: str, tool_input: dict[str, Any], thought: str) -> LLMDecision:
@@ -53,6 +57,13 @@ def _offline_text_response(messages: list[dict[str, Any]]) -> LLMDecision:
     """无工具场景的最小离线回复，覆盖总纲归纳与专家纠错演示。"""
     latest = _last_user_message(messages)
     if "策略样本" in latest:
+        protected = _CONFIRMED_SUMMARY_RE.search(latest)
+        if protected:
+            return LLMDecision(
+                type="final",
+                thought="离线模式下保留专家确认总纲，不伪造新增策略归纳。",
+                content=protected.group(1).strip(),
+            )
         samples = re.findall(
             r"问题现象:(.*?)\n\s*建议排查路径:(.*?)\n\s*策略原因:(.*?)(?=\n\n\d+\. 问题现象:|\Z)",
             latest,

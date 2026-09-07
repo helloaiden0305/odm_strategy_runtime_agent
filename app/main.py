@@ -82,20 +82,20 @@ def get_playbook(source: str | None = None) -> list[dict]:
 
 @app.get("/api/playbook/summary")
 def playbook_summary() -> dict:
-    """排查策略总纲:返回已保存版本(可被专家改写);首次访问自动归纳并保存。"""
-    return {"summary": chat_service.get_or_build_summary()}
+    """返回总纲及确认状态；首次 AI 归纳只保存草稿。"""
+    return chat_service.get_or_build_summary().to_dict()
 
 
 @app.put("/api/playbook/summary")
 def save_playbook_summary(req: SummaryUpdate) -> dict:
-    """测试专家手动改写总纲并保存。"""
+    """专家保存后，该版本成为保护性合并基底。"""
     return settings_service.set_summary(req.text)
 
 
 @app.post("/api/playbook/summary/regenerate")
 def regenerate_playbook_summary() -> dict:
-    """状态合并:保留专家改写,融合全部样本重新归纳。"""
-    return {"summary": chat_service.regenerate_summary()}
+    """仅对专家确认版本执行保护性追加合并。"""
+    return chat_service.regenerate_summary().to_dict()
 
 
 @app.put("/api/playbook/{sample_id}")

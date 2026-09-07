@@ -303,14 +303,47 @@ def commit_refinement(question: str, answer: str, feedback: str) -> dict:
     from . import playbook_service
     note = "(实测纠偏)" + feedback if feedback else "(实测纠偏)"
     sample_id = playbook_service.add_sample(question, answer, note, source="refine")
-    summary = regenerate_summary()
-    return {"ok": True, "sample_id": sample_id, "summary": summary}
+    merged = regenerate_summary()
+    return {"ok": True, "sample_id": sample_id, **merged.to_dict()}
 
 
 _EMPTY_SUMMARY = "策略样本库还是空的。去『专家教学模式』录入几条,我就能帮你归纳排查策略总纲了。"
 
 
-def induce_playbook(existing: str = "") -> str:
+@dataclass(frozen=True)
+class SummaryMergeResult:
+    summary: str
+    merge_status: str
+    summary_status: str
+    message: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "summary": self.summary,
+            "merge_status": self.merge_status,
+            "summary_status": self.summary_status,
+            "message": self.message,
+        }
+
+
+def _normalize_summary(text: str) -> str:
+    return (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def validate_summary_merge(existing: str, candidate: str) -> tuple[bool, str]:
+    """只校验专家确认原文未丢失，不尝试判断新增规则的语义。"""
+    base = _normalize_summary(existing)
+    merged = _normalize_summary(candidate)
+    if not base:
+        return False, "缺少专家确认保护基底。"
+    if not merged:
+        return False, "归纳结果为空。"
+    if not merged.startswith(base):
+        return False, "归纳结果未以专家确认原文开头。"
+    return True, ""
+
+
+def induce_playbook(existing: str = "", retry_reason: str = "") -> str:
     """从策略样本归纳『排查策略总纲』。
 
     existing 非空时执行【状态合并】:完整保留专家已改写的总纲规则,
@@ -325,14 +358,20 @@ def induce_playbook(existing: str = "") -> str:
         for i, s in enumerate(samples)
     )
     if existing.strip():
+        retry_hint = (
+            "\n\n【上次输出未通过保护校验】\n" + retry_reason
+            + "请严格先逐字复制专家确认保护基底，再决定是否在末尾追加补充策略。"
+            if retry_reason else ""
+        )
         messages = [
             {"role": "system", "content": (
-                "你是资深 ODM 测试策略专家。专家已经有一份【现有排查策略总纲】,其中可能有手动修订或补充的规则,"
-                "这些必须尊重并原样保留。现在给你一批策略样本。请在【完整保留现有总纲里的规则和措辞倾向】"
-                "的前提下,把样本里体现出、但现有总纲还没覆盖的新排查策略补充进去;若样本与现有总纲有冲突,"
-                "一律以现有总纲为准。输出更新后的完整总纲,条目化、简洁;不要删除已有规则,不要复述原始样本。")},
+                "你是资深 ODM 测试策略专家。下面的【专家确认保护基底】必须逐字原样保留。"
+                "你的输出必须先完整复制该基底，不得删除、改写、重排或插入内容；"
+                "仅可在基底末尾追加“补充策略”小节。补充内容只能来自基底未覆盖的样本共性；"
+                "与基底冲突的样本不应采纳。没有可靠新增策略时，只输出基底。"
+                "不要输出解释、前缀、致谢或原始样本。" + retry_hint)},
             {"role": "user", "content": (
-                "【现有排查策略总纲(专家已改写,须保留)】:\n" + existing.strip()
+                "【专家确认保护基底(必须原样保留)】:\n" + existing.strip()
                 + "\n\n【全部策略样本】:\n" + body)},
         ]
     else:
@@ -348,22 +387,68 @@ def induce_playbook(existing: str = "") -> str:
     return (decision.content or "").strip() or "(暂未归纳出内容)"
 
 
-def get_or_build_summary() -> str:
-    """返回已保存的总纲;若从未生成过,则首次自动归纳并存下来(保留后续编辑)。"""
+def get_or_build_summary() -> SummaryMergeResult:
+    """返回总纲；首次 AI 归纳只保存为草稿，等待专家确认。"""
     from . import settings_service
     saved = settings_service.get_summary()
     if saved.strip():
-        return saved
+        return SummaryMergeResult(
+            summary=saved,
+            merge_status="existing",
+            summary_status=settings_service.get_summary_status(),
+        )
     fresh = induce_playbook()
     if fresh and fresh != _EMPTY_SUMMARY:
-        settings_service.set_summary(fresh)
-    return fresh
+        settings_service.set_summary(fresh, status=settings_service.SUMMARY_DRAFT)
+        return SummaryMergeResult(
+            summary=fresh,
+            merge_status="draft_generated",
+            summary_status=settings_service.SUMMARY_DRAFT,
+            message="AI 已生成草稿，专家保存后将作为后续合并基底。",
+        )
+    return SummaryMergeResult(
+        summary=fresh,
+        merge_status="empty",
+        summary_status=settings_service.SUMMARY_DRAFT,
+    )
 
 
-def regenerate_summary() -> str:
-    """状态合并:以专家改写后的现有总纲为基底,融合全部样本,重新归纳并保存。"""
+def regenerate_summary() -> SummaryMergeResult:
+    """专家确认版本采用保护性追加合并；未确认内容仅更新草稿。"""
     from . import settings_service
-    merged = induce_playbook(existing=settings_service.get_summary())
-    if merged and merged != _EMPTY_SUMMARY:
-        settings_service.set_summary(merged)
-    return merged
+    existing = settings_service.get_summary()
+    status = settings_service.get_summary_status()
+    if not existing.strip() or status != settings_service.SUMMARY_EXPERT_CONFIRMED:
+        fresh = induce_playbook()
+        if fresh and fresh != _EMPTY_SUMMARY:
+            settings_service.set_summary(fresh, status=settings_service.SUMMARY_DRAFT)
+        return SummaryMergeResult(
+            summary=fresh,
+            merge_status="draft_generated",
+            summary_status=settings_service.SUMMARY_DRAFT,
+            message="当前没有专家确认基底，已更新 AI 草稿。",
+        )
+
+    candidate = induce_playbook(existing=existing)
+    valid, reason = validate_summary_merge(existing, candidate)
+    if valid:
+        settings_service.set_summary(candidate, status=settings_service.SUMMARY_EXPERT_CONFIRMED)
+        message = "已合并新增策略。" if _normalize_summary(candidate) != _normalize_summary(existing) else "已保留专家确认版本；未发现可靠新增策略。"
+        return SummaryMergeResult(candidate, "merged", settings_service.SUMMARY_EXPERT_CONFIRMED, message)
+
+    retried = induce_playbook(existing=existing, retry_reason=reason)
+    valid, retry_reason = validate_summary_merge(existing, retried)
+    if valid:
+        settings_service.set_summary(retried, status=settings_service.SUMMARY_EXPERT_CONFIRMED)
+        return SummaryMergeResult(
+            retried,
+            "merged_after_retry",
+            settings_service.SUMMARY_EXPERT_CONFIRMED,
+            "首次归纳未通过保护校验，重试后已安全合并。",
+        )
+    return SummaryMergeResult(
+        existing,
+        "protected_existing",
+        settings_service.SUMMARY_EXPERT_CONFIRMED,
+        "本次归纳未安全合并，已保留专家确认版本。",
+    )
