@@ -168,7 +168,7 @@ main { padding: 18px 24px; }
 .sample-pending .sample-group-head { color: #9a3412; }
 .sample-pending .grp-count { color: #9a3412; background: #ffedd5; }
 .sample-group-head {
-  display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 800;
   color: #334155; padding: 6px 0 8px; border-bottom: 1px solid var(--line); margin-bottom: 10px;
 }
 .sample-group-head .tag-mini { margin-left: 0; }
