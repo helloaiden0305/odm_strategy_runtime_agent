@@ -71,7 +71,12 @@ def refine_commit(req: RefineCommitRequest) -> dict:
 @app.post("/api/teach")
 def teach(req: TeachRequest) -> dict:
     sample_id = playbook_service.add_sample(req.question, req.answer, req.note)
-    return {"ok": True, "sample_id": sample_id}
+    return {
+        "ok": True,
+        "sample_id": sample_id,
+        "sample_stats": playbook_service.sample_stats(),
+        "message": "已保存至策略样本库，可用于后续策略总纲归纳。",
+    }
 
 
 @app.get("/api/playbook")
@@ -80,9 +85,14 @@ def get_playbook(source: str | None = None) -> list[dict]:
     return playbook_service.list_samples(source)
 
 
+@app.get("/api/playbook/stats")
+def get_playbook_stats() -> dict:
+    return playbook_service.sample_stats()
+
+
 @app.get("/api/playbook/summary")
 def playbook_summary() -> dict:
-    """返回总纲及确认状态；首次 AI 归纳只保存草稿。"""
+    """返回已保存总纲及当前样本归纳依据。"""
     return chat_service.get_or_build_summary().to_dict()
 
 
@@ -98,14 +108,22 @@ def regenerate_playbook_summary() -> dict:
     return chat_service.regenerate_summary().to_dict()
 
 
+@app.post("/api/playbook/summary/preview")
+def preview_playbook_summary() -> dict:
+    """生成候选总纲，不写入数据库。"""
+    return chat_service.build_summary_preview().to_dict()
+
+
 @app.put("/api/playbook/{sample_id}")
 def update_playbook(sample_id: int, req: SampleUpdate) -> dict:
-    return playbook_service.update_sample(sample_id, req.question, req.answer, req.note)
+    result = playbook_service.update_sample(sample_id, req.question, req.answer, req.note)
+    return {**result, "sample_stats": playbook_service.sample_stats()}
 
 
 @app.delete("/api/playbook/{sample_id}")
 def delete_playbook(sample_id: int) -> dict:
-    return playbook_service.delete_sample(sample_id)
+    result = playbook_service.delete_sample(sample_id)
+    return {**result, "sample_stats": playbook_service.sample_stats()}
 
 
 # ---------- 工单(需要升级的问题) → 专家复盘 ----------

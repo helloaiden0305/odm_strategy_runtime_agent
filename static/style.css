@@ -18,6 +18,14 @@ body {
   background: #f6f8fb;
   color: #0f172a;
 }
+.app-notice {
+  position: fixed; z-index: 100; top: 16px; left: 50%; transform: translate(-50%, -8px);
+  max-width: min(520px, calc(100vw - 32px)); padding: 9px 14px; border: 1px solid #86efac;
+  border-radius: 8px; background: #f0fdf4; color: #166534; font-size: 13px; line-height: 1.45;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, .12); opacity: 0; pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+}
+.app-notice.show { opacity: 1; transform: translate(-50%, 0); }
 
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
@@ -132,6 +140,7 @@ main { padding: 18px 24px; }
 .review-head { margin-bottom: 14px; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
 .review-head h3 { margin: 0; font-size: 15px; }
 .review-head p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.review-head .sample-library-status { color: #475569; }
 .cards { display: flex; flex-direction: column; gap: 12px; }
 .card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
 .card .q { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
@@ -255,6 +264,18 @@ main { padding: 18px 24px; }
 .refine-btns { display: flex; gap: 8px; }
 
 .summary-text { white-space: pre-wrap; font-size: 14px; line-height: 1.7; color: #1e293b; }
+.summary-guide {
+  padding: 9px 11px; border-left: 3px solid #60a5fa; background: #f8fafc;
+  color: #475569; font-size: 12px; line-height: 1.65;
+}
+.summary-evidence, .summary-preview {
+  font-size: 12px; line-height: 1.55; color: #475569;
+}
+.summary-evidence { padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.summary-preview {
+  padding: 8px 10px; border: 1px solid #bfdbfe; border-radius: 8px;
+  background: #eff6ff; color: #1d4ed8;
+}
 .summary-edit { width: 100%; min-height: 320px; box-sizing: border-box; padding: 14px; font-size: 14px;
   line-height: 1.7; border: 1px solid #cbd5e1; border-radius: 10px; resize: vertical; font-family: inherit; color: #1e293b; }
 .prompt-text { white-space: pre-wrap; font-size: 12.5px; line-height: 1.65; color: #334155;
@@ -265,6 +286,7 @@ main { padding: 18px 24px; }
 .settings-panel textarea { width: 100%; min-height: 140px; box-sizing: border-box; padding: 12px; font-size: 13px;
   line-height: 1.7; border: 1px solid #cbd5e1; border-radius: 10px; resize: vertical; font-family: inherit; color: #1e293b; }
 .settings-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+#sum-save { margin-left: auto; }
 .settings-hint { font-size: 12px; color: var(--muted); }
 .btn-ok { padding: 9px 18px; border: none; border-radius: 10px; cursor: pointer; font-size: 13px; font-weight: 600;
   background: linear-gradient(135deg, #10b981, #059669); color: #fff; }

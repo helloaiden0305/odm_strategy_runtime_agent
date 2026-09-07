@@ -304,7 +304,13 @@ def commit_refinement(question: str, answer: str, feedback: str) -> dict:
     note = "(实测纠偏)" + feedback if feedback else "(实测纠偏)"
     sample_id = playbook_service.add_sample(question, answer, note, source="refine")
     merged = regenerate_summary()
-    return {"ok": True, "sample_id": sample_id, **merged.to_dict()}
+    return {
+        "ok": True,
+        "sample_id": sample_id,
+        **merged.to_dict(),
+        "sample_stats": playbook_service.sample_stats(),
+        "message": "已保存至策略样本库；专家纠错沿用现有自动合并流程。",
+    }
 
 
 _EMPTY_SUMMARY = "策略样本库还是空的。去『专家教学模式』录入几条,我就能帮你归纳排查策略总纲了。"
@@ -316,13 +322,17 @@ class SummaryMergeResult:
     merge_status: str
     summary_status: str
     message: str = ""
+    sample_stats: dict[str, Any] | None = None
+    pending_save: bool = False
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "summary": self.summary,
             "merge_status": self.merge_status,
             "summary_status": self.summary_status,
             "message": self.message,
+            "sample_stats": self.sample_stats or {"total": 0, "by_source": {}},
+            "pending_save": self.pending_save,
         }
 
 
@@ -388,28 +398,83 @@ def induce_playbook(existing: str = "", retry_reason: str = "") -> str:
 
 
 def get_or_build_summary() -> SummaryMergeResult:
-    """返回总纲；首次 AI 归纳只保存为草稿，等待专家确认。"""
-    from . import settings_service
+    """返回已保存总纲；未确认时由预览接口显式生成候选。"""
+    from . import playbook_service, settings_service
+    stats = playbook_service.sample_stats()
     saved = settings_service.get_summary()
     if saved.strip():
         return SummaryMergeResult(
             summary=saved,
             merge_status="existing",
             summary_status=settings_service.get_summary_status(),
-        )
-    fresh = induce_playbook()
-    if fresh and fresh != _EMPTY_SUMMARY:
-        settings_service.set_summary(fresh, status=settings_service.SUMMARY_DRAFT)
-        return SummaryMergeResult(
-            summary=fresh,
-            merge_status="draft_generated",
-            summary_status=settings_service.SUMMARY_DRAFT,
-            message="AI 已生成草稿，专家保存后将作为后续合并基底。",
+            sample_stats=stats,
         )
     return SummaryMergeResult(
-        summary=fresh,
+        summary="",
         merge_status="empty",
         summary_status=settings_service.SUMMARY_DRAFT,
+        message="尚未保存策略总纲。请先重新归纳生成候选版本。",
+        sample_stats=stats,
+    )
+
+
+def build_summary_preview() -> SummaryMergeResult:
+    """根据当前样本生成候选总纲；候选只留在响应中，不写入设置表。"""
+    from . import playbook_service, settings_service
+    stats = playbook_service.sample_stats()
+    existing = settings_service.get_summary()
+    status = settings_service.get_summary_status()
+
+    if not stats["total"]:
+        return SummaryMergeResult(
+            summary=_EMPTY_SUMMARY,
+            merge_status="preview_empty",
+            summary_status=status,
+            message="暂无策略样本，无法生成可保存的归纳候选。",
+            sample_stats=stats,
+            pending_save=False,
+        )
+
+    if not existing.strip() or status != settings_service.SUMMARY_EXPERT_CONFIRMED:
+        return SummaryMergeResult(
+            summary=induce_playbook(),
+            merge_status="preview_generated",
+            summary_status=status,
+            message="已基于当前策略样本生成候选总纲，尚未生效。",
+            sample_stats=stats,
+            pending_save=True,
+        )
+
+    candidate = induce_playbook(existing=existing)
+    valid, reason = validate_summary_merge(existing, candidate)
+    if valid:
+        return SummaryMergeResult(
+            summary=candidate,
+            merge_status="preview_merged",
+            summary_status=status,
+            message="已基于当前策略样本生成候选总纲，尚未生效。",
+            sample_stats=stats,
+            pending_save=True,
+        )
+
+    retried = induce_playbook(existing=existing, retry_reason=reason)
+    valid, _ = validate_summary_merge(existing, retried)
+    if valid:
+        return SummaryMergeResult(
+            summary=retried,
+            merge_status="preview_merged_after_retry",
+            summary_status=status,
+            message="首次预览未通过保护校验，重试后已生成待确认候选。",
+            sample_stats=stats,
+            pending_save=True,
+        )
+    return SummaryMergeResult(
+        summary=existing,
+        merge_status="protected_existing",
+        summary_status=status,
+        message="本次归纳未安全合并，已保留专家确认版本。",
+        sample_stats=stats,
+        pending_save=False,
     )
 
 

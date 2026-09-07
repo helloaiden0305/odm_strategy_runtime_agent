@@ -39,13 +39,39 @@ class SummaryMergeGuardTest(unittest.TestCase):
     def tearDown(self):
         chat_service._LOOP.llm = self.original_provider
 
-    def test_first_summary_is_draft(self):
+    def test_empty_summary_waits_for_explicit_preview(self):
         chat_service._LOOP.llm = MockLLMProvider()
         result = chat_service.get_or_build_summary()
 
-        self.assertTrue(result.summary)
-        self.assertEqual(result.merge_status, "draft_generated")
+        self.assertEqual(result.summary, "")
+        self.assertEqual(result.merge_status, "empty")
         self.assertEqual(result.summary_status, settings_service.SUMMARY_DRAFT)
+        self.assertFalse(settings_service.get_summary())
+
+    def test_preview_does_not_write_summary(self):
+        chat_service._LOOP.llm = MockLLMProvider()
+
+        result = chat_service.build_summary_preview()
+
+        self.assertTrue(result.summary)
+        self.assertEqual(result.merge_status, "preview_generated")
+        self.assertTrue(result.pending_save)
+        self.assertFalse(settings_service.get_summary())
+        self.assertGreater(result.sample_stats["total"], 0)
+
+    def test_preview_keeps_confirmed_base_without_writing(self):
+        base = "1. 专家确认：先核对版本和关键日志。"
+        settings_service.set_summary(base, status=settings_service.SUMMARY_EXPERT_CONFIRMED)
+        chat_service._LOOP.llm = _SummaryProvider([
+            base + "\n\n补充策略\n2. 证据不足时升级专家。",
+        ])
+
+        result = chat_service.build_summary_preview()
+
+        self.assertEqual(result.merge_status, "preview_merged")
+        self.assertTrue(result.pending_save)
+        self.assertTrue(result.summary.startswith(base))
+        self.assertEqual(settings_service.get_summary(), base)
 
     def test_confirmed_base_is_preserved_after_retry(self):
         base = "1. 专家确认：必须先核对版本和关键日志。"

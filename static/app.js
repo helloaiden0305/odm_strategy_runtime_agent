@@ -17,6 +17,8 @@ let runCounter = 0;
 // 策略样本来源:分开管理专家教学 / 专家纠错 / 工单复盘
 const SOURCE_LABEL = { taught: "专家教学", refine: "专家纠错", ticket: "工单复盘" };
 const srcLabel = (s) => SOURCE_LABEL[s] || "专家教学";
+let summaryPreviewPending = false;
+let noticeTimer = null;
 const QUICK = [
   "蓝牙耳机偶现连接失败,应该怎么排查?",
   "刷机失败一直卡在 20%,可能是什么原因?",
@@ -28,6 +30,14 @@ const QUICK = [
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function showNotice(message) {
+  const notice = $("#app-notice");
+  notice.textContent = message;
+  notice.classList.add("show");
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => notice.classList.remove("show"), 3400);
 }
 
 // ---------- Tab 切换 ----------
@@ -184,8 +194,9 @@ function addBotMessage(text, opts = {}) {
       commitBtn.onclick = async () => {
         commitBtn.disabled = true;
         commitBtn.textContent = "固化中…";
-        await post("/api/refine/commit", { question, answer: text, feedback });
-        commitBtn.textContent = "已固化 ✓ 已并入总纲";
+        const result = await post("/api/refine/commit", { question, answer: text, feedback });
+        commitBtn.textContent = "已固化至样本库 ✓";
+        showNotice(result.message || "已保存至策略样本库，可用于后续策略总纲归纳。");
         refreshMetrics();
         if (isDepositMode()) loadTaught();
       };
@@ -512,8 +523,9 @@ $("#teach-btn").addEventListener("click", async () => {
   const answer = $("#t-answer").value.trim();
   const note = $("#t-note").value.trim();
   if (!question || !answer) return alert("请至少填写「问题现象」和「建议排查路径」");
-  await post("/api/teach", { question, answer, note });
+  const result = await post("/api/teach", { question, answer, note });
   addMessage(`已沉淀策略样本:「${question}」`, "bot");
+  showNotice(result.message || "已保存至策略样本库，可用于后续策略总纲归纳。");
   $("#t-question").value = ""; $("#t-answer").value = ""; $("#t-note").value = "";
   refreshMetrics();
   loadTaught();
@@ -541,37 +553,96 @@ async function refreshMetrics() {
 }
 
 // ---------- AI 归纳的排查策略总纲 ----------
-function renderSummaryState(result) {
-  const state = result.summary_status;
-  $("#sum-state").textContent = state === "expert_confirmed" ? "专家已确认" : "AI 草稿";
+function renderSummaryEvidence(stats = {}) {
+  const bySource = stats.by_source || {};
+  const total = Number(stats.total || 0);
+  if (!total) {
+    $("#sum-evidence").textContent = "归纳依据：暂无策略样本。先沉淀专家经验后，再生成初始候选。";
+    return;
+  }
+  $("#sum-evidence").textContent =
+    `归纳依据：当前策略样本库 ${total} 条，其中专家教学 ${bySource.taught || 0} 条 · ` +
+    `专家纠错 ${bySource.refine || 0} 条 · 工单复盘 ${bySource.ticket || 0} 条。`;
+}
+
+function renderSummaryState(result, pending = summaryPreviewPending) {
+  if (pending) {
+    $("#sum-state").textContent = "待专家保存";
+    return;
+  }
+  if (result.merge_status === "empty") {
+    $("#sum-state").textContent = "尚未生成";
+    return;
+  }
+  $("#sum-state").textContent =
+    result.summary_status === "expert_confirmed" ? "专家已确认" : "AI 草稿";
+}
+
+function setSummaryPreview(message, pending) {
+  const preview = $("#sum-preview");
+  preview.hidden = !message;
+  preview.textContent = message || "";
+  summaryPreviewPending = pending;
+}
+
+function closeSummaryModal() {
+  summaryPreviewPending = false;
+  $("#sum-modal").classList.remove("show");
+  $("#sum-preview").hidden = true;
+  $("#sum-preview").textContent = "";
 }
 
 $("#summary-btn").addEventListener("click", async () => {
   $("#sum-text").value = "";
-  $("#sum-text").placeholder = "AI 正在归纳排查策略总纲……";
+  $("#sum-text").placeholder = "点击左侧「重新归纳」生成候选总纲";
   $("#sum-status").textContent = "";
+  setSummaryPreview("", false);
   $("#sum-modal").classList.add("show");
   const r = await api("/api/playbook/summary");
   $("#sum-text").value = r.summary || "";
+  renderSummaryEvidence(r.sample_stats);
   renderSummaryState(r);
+  $("#sum-status").textContent = r.message || "";
 });
 $("#sum-save").addEventListener("click", async () => {
+  if (!$("#sum-text").value.trim()) return alert("请先重新归纳或填写总纲内容");
+  $("#sum-save").disabled = true;
   const r = await put("/api/playbook/summary", { text: $("#sum-text").value });
-  renderSummaryState(r);
-  $("#sum-status").textContent = "已保存为专家确认版本 ✓";
-  setTimeout(() => ($("#sum-status").textContent = ""), 1500);
+  $("#sum-save").disabled = false;
+  setSummaryPreview("", false);
+  renderSummaryState({ ...r, merge_status: "existing" }, false);
+  $("#sum-status").textContent = "已保存为专家确认版本，后续策略验证将使用该总纲。";
+  showNotice("已保存为专家确认总纲，后续策略验证将使用该版本。");
 });
 $("#sum-regen").addEventListener("click", async () => {
-  $("#sum-status").textContent = "AI 正在合并归纳(保留你的改写)……";
-  const r = await post("/api/playbook/summary/regenerate");
-  $("#sum-text").value = r.summary || "";
-  renderSummaryState(r);
-  $("#sum-status").textContent = r.message || "已重新归纳 ✓";
-  setTimeout(() => ($("#sum-status").textContent = ""), 1500);
+  const button = $("#sum-regen");
+  button.disabled = true;
+  button.textContent = "归纳中…";
+  $("#sum-status").textContent = "正在根据当前策略样本生成候选版本…";
+  try {
+    const r = await post("/api/playbook/summary/preview");
+    $("#sum-text").value = r.summary || "";
+    renderSummaryEvidence(r.sample_stats);
+    setSummaryPreview(r.message, Boolean(r.pending_save));
+    renderSummaryState(r);
+    $("#sum-status").textContent = r.pending_save
+      ? "候选版本尚未生效，请确认或修改后保存。"
+      : (r.message || "");
+  } finally {
+    button.disabled = false;
+    button.textContent = "↻ 重新归纳";
+  }
 });
-$("#sum-close").addEventListener("click", () => $("#sum-modal").classList.remove("show"));
+$("#sum-text").addEventListener("input", () => {
+  if (!$("#sum-text").value.trim()) return;
+  if (!summaryPreviewPending) {
+    setSummaryPreview("编辑内容尚未保存，不会影响后续策略验证。", true);
+    renderSummaryState({ summary_status: "draft" }, true);
+  }
+});
+$("#sum-close").addEventListener("click", closeSummaryModal);
 $("#sum-modal").addEventListener("click", (e) => {
-  if (e.target.id === "sum-modal") $("#sum-modal").classList.remove("show");
+  if (e.target.id === "sum-modal") closeSummaryModal();
 });
 
 // ---------- 完整系统提示词(只读) ----------
@@ -621,7 +692,8 @@ async function loadReview() {
     const [ans, note] = c.querySelectorAll("textarea");
     c.querySelector("button").onclick = async () => {
       if (!ans.value.trim()) return alert("请先填写建议排查路径");
-      await post(`/api/tickets/${t.id}/teach`, { answer: ans.value.trim(), note: note.value.trim() });
+      const result = await post(`/api/tickets/${t.id}/teach`, { answer: ans.value.trim(), note: note.value.trim() });
+      showNotice(result.message || "已保存至策略样本库，可用于后续策略总纲归纳。");
       loadReview(); refreshMetrics();
     };
     tbox.appendChild(c);
@@ -630,13 +702,12 @@ async function loadReview() {
 }
 
 async function loadSamples() {
-  const samples = await api("/api/playbook");
-  const counts = { taught: 0, refine: 0, ticket: 0 };
-  samples.forEach((s) => {
-    const source = s.source || "taught";
-    if (Object.prototype.hasOwnProperty.call(counts, source)) counts[source] += 1;
-  });
-  $("#sample-total").textContent = samples.length;
+  const [samples, stats] = await Promise.all([
+    api("/api/playbook"),
+    api("/api/playbook/stats"),
+  ]);
+  const counts = { taught: 0, refine: 0, ticket: 0, ...(stats.by_source || {}) };
+  $("#sample-total").textContent = stats.total || 0;
   $("#sample-taught-total").textContent = counts.taught;
   $("#sample-refine-total").textContent = counts.refine;
   $("#sample-ticket-total").textContent = counts.ticket;
@@ -682,15 +753,18 @@ function renderSampleCard(s) {
     });
     save.disabled = false;
     if (res && res.ok) {
-      save.textContent = "已保存 ✓";
-      setTimeout(() => { save.textContent = "保存修改"; }, 1500);
+      save.textContent = "已保存至样本库 ✓";
+      showNotice("已更新策略样本库；下次重新归纳时会纳入候选总纲。");
+      setTimeout(() => { save.textContent = "保存修改"; }, 1800);
     } else {
       alert("保存失败,请重试");
     }
   };
   remove.onclick = async () => {
     if (!confirm("确定删除这条策略样本?")) return;
-    await del(`/api/playbook/${s.id}`); loadReview(); refreshMetrics();
+    await del(`/api/playbook/${s.id}`);
+    showNotice("已从策略样本库删除；后续归纳将不再使用该样本。");
+    loadSamples(); loadReview(); refreshMetrics();
   };
   return c;
 }

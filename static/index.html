@@ -4,9 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>XZY ODM 问题排查策略自进化平台</title>
-  <link rel="stylesheet" href="/static/style.css?v=20" />
+  <link rel="stylesheet" href="/static/style.css?v=21" />
 </head>
 <body>
+  <div class="app-notice" id="app-notice" role="status" aria-live="polite"></div>
   <header class="topbar">
     <div class="brand">XZY ODM 问题排查策略平台 <span class="tag">Agent Loop · 策略验证 · 策略沉淀</span></div>
     <nav class="tabs">
@@ -41,11 +42,16 @@
         <button class="modal-close" id="sum-close">✕</button>
       </div>
       <div class="modal-body">
+        <div class="summary-guide">
+          策略样本保留具体问题、证据和排查路径；策略总纲沉淀经专家确认的通用优先级与边界。归纳结果可在此修改，保存后才会作为 Agent 的执行基底。
+        </div>
+        <div class="summary-evidence" id="sum-evidence"></div>
+        <div class="summary-preview" id="sum-preview" hidden></div>
         <textarea class="summary-edit" id="sum-text" placeholder="加载中…"></textarea>
         <div class="settings-actions">
-          <button id="sum-save" class="btn-ok">保存改写</button>
-          <button id="sum-regen" class="btn-brain">↻ 重新归纳(合并新样本)</button>
+          <button id="sum-regen" class="btn-brain">↻ 重新归纳</button>
           <span class="settings-hint" id="sum-status"></span>
+          <button id="sum-save" class="btn-ok">保存改写</button>
         </div>
       </div>
     </div>
@@ -113,6 +119,7 @@
         <div class="review-head">
           <h3>策略样本库</h3>
           <p>查看、编辑、删除已经沉淀的专家教学、专家纠错和工单复盘策略样本。</p>
+          <p class="sample-library-status" id="sample-library-status">样本用于后续策略总纲归纳；保存修改不会自动改写已确认总纲。</p>
         </div>
         <div class="sample-stats" aria-label="策略样本统计">
           <div class="sample-stat">
@@ -174,6 +181,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=21"></script>
+  <script src="/static/app.js?v=22"></script>
 </body>
 </html>
