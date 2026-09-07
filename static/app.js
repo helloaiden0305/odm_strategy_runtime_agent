@@ -190,7 +190,7 @@ function addBotMessage(text, opts = {}) {
     if (revised) {
       const commitBtn = document.createElement("button");
       commitBtn.className = "mini-btn ok";
-      commitBtn.textContent = "固化为策略";
+      commitBtn.textContent = "固化为策略（专家纠错）";
       commitBtn.onclick = async () => {
         commitBtn.disabled = true;
         commitBtn.textContent = "固化中…";
@@ -718,7 +718,7 @@ async function loadSamples() {
   };
   const emptyHint = {
     taught: '<div class="empty">还没有专家教学样本。去「策略沉淀」录入几条。</div>',
-    refine: '<div class="empty">还没有专家纠错记录。在策略验证页对回复点「纠错」并「固化为策略」即可产生。</div>',
+    refine: '<div class="empty">还没有专家纠错记录。在策略验证页对回复点「纠错」并「固化为策略（专家纠错）」即可产生。</div>',
     ticket: '<div class="empty">还没有工单复盘样本。</div>',
   };
   Object.entries(groups).forEach(([key, g]) => {
