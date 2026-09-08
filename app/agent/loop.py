@@ -60,16 +60,22 @@ class AgentLoop:
                            plan: AgentPlan, step: PlanStep | None) -> list[dict[str, Any]]:
         """向本轮模型调用补充短计划上下文，不把运行态提示写入会话历史。"""
         if step is None:
-            return copy.deepcopy(messages)
-        context = (
-            "【当前受控执行阶段】\n"
-            f"计划目标：{plan.goal}\n"
-            f"阶段：{step.goal}\n"
-            f"待补证据：{'、'.join(plan.evidence_gap) or '无'}\n"
-            f"允许工具：{'、'.join(step.allowed_tools)}\n"
-            f"退出条件：{step.exit_condition}\n"
-            "只能在允许工具中选择；证据不足时说明待补充信息或按计划进入升级路径。"
-        )
+            context = (
+                "【收尾阶段】\n"
+                f"计划目标：{plan.goal}\n"
+                "全部计划步骤和工具调用均已完成。现在不得调用工具、不得输出空内容；"
+                "请仅依据已有 Observation 生成一份非空的最终回复。"
+            )
+        else:
+            context = (
+                "【当前受控执行阶段】\n"
+                f"计划目标：{plan.goal}\n"
+                f"阶段：{step.goal}\n"
+                f"待补证据：{'、'.join(plan.evidence_gap) or '无'}\n"
+                f"允许工具：{'、'.join(step.allowed_tools)}\n"
+                f"退出条件：{step.exit_condition}\n"
+                "只能在允许工具中选择；证据不足时说明待补充信息或按计划进入升级路径。"
+            )
         enriched = copy.deepcopy(messages)
         if enriched and enriched[0].get("role") == "system":
             enriched[0]["content"] = (enriched[0].get("content") or "") + "\n\n" + context

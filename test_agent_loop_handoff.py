@@ -115,6 +115,19 @@ def _loop(provider: _ScriptedProvider) -> tuple[AgentLoop, dict[str, _FakeTool]]
 
 
 class AgentLoopHandoffTest(unittest.TestCase):
+    def test_completed_plan_instructs_model_to_generate_final_reply(self):
+        plan = _plan(with_case=True)
+        for step in plan.steps:
+            step.status = "completed"
+
+        messages = AgentLoop._with_plan_context(
+            [{"role": "system", "content": "base prompt"}], plan, None,
+        )
+
+        self.assertIn("【收尾阶段】", messages[0]["content"])
+        self.assertIn("不得调用工具", messages[0]["content"])
+        self.assertIn("非空的最终回复", messages[0]["content"])
+
     def test_mock_history_lookup_finishes_after_case_result(self):
         provider = MockLLMProvider()
         messages = [
