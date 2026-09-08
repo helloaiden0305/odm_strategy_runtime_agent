@@ -47,6 +47,7 @@ class _ScriptedProvider(LLMProvider):
         self._plan = plan
         self._decisions = list(decisions)
         self.chat_calls = 0
+        self.finalize_calls = 0
 
     def plan(self, messages: list[dict], tools: list[dict]) -> AgentPlan:
         return self._plan
@@ -54,6 +55,10 @@ class _ScriptedProvider(LLMProvider):
     def chat(self, messages: list[dict], tools: list[dict]) -> LLMDecision:
         self.chat_calls += 1
         return self._decisions.pop(0)
+
+    def finalize(self, messages: list[dict]) -> LLMDecision:
+        self.finalize_calls += 1
+        return self.chat(messages, [])
 
 
 def _tool_call(name: str, payload: dict) -> LLMDecision:
@@ -115,6 +120,30 @@ def _loop(provider: _ScriptedProvider) -> tuple[AgentLoop, dict[str, _FakeTool]]
 
 
 class AgentLoopHandoffTest(unittest.TestCase):
+    def test_all_completed_steps_use_dedicated_finalizer(self):
+        plan = _plan(with_case=True)
+        plan.steps.pop()
+        provider = _ScriptedProvider(
+            plan,
+            [
+                _tool_call("recall_troubleshooting_strategy", {"query": "Bluetooth"}),
+                _tool_call("defect_case_search", {"query": "Bluetooth"}),
+                LLMDecision(
+                    type="final",
+                    thought="All required evidence has been collected.",
+                    content="A relevant historical case was found.",
+                ),
+            ],
+        )
+        loop, tools = _loop(provider)
+
+        result = loop.run("Find a related Bluetooth case.")
+
+        self.assertFalse(result.handoff)
+        self.assertEqual(provider.finalize_calls, 1)
+        self.assertEqual(tools["escalate_to_expert"].calls, 0)
+        self.assertIn("historical case", result.reply)
+
     def test_completed_plan_instructs_model_to_generate_final_reply(self):
         plan = _plan(with_case=True)
         for step in plan.steps:

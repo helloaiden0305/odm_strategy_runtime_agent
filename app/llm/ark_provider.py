@@ -58,6 +58,10 @@ class ArkLLMProvider(LLMProvider):
 
     def _plan_completion(self, messages: list[dict[str, Any]],
                          schema: dict[str, Any]) -> str:
+        return self._structured_completion(messages, schema, "odm_agent_plan")
+
+    def _structured_completion(self, messages: list[dict[str, Any]],
+                               schema: dict[str, Any], schema_name: str) -> str:
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": _to_openai_messages(messages),
@@ -65,7 +69,7 @@ class ArkLLMProvider(LLMProvider):
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "odm_agent_plan",
+                    "name": schema_name,
                     "strict": True,
                     "schema": schema,
                 },
@@ -81,6 +85,39 @@ class ArkLLMProvider(LLMProvider):
             kwargs.pop("response_format")
             resp = self.client.chat.completions.create(**kwargs)
         return (resp.choices[0].message.content or "").strip()
+
+    def finalize(self, messages: list[dict[str, Any]]) -> LLMDecision:
+        """以结构化最终回复收尾，避免无工具回合返回空文本。"""
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "decision_reason": {"type": "string", "minLength": 1, "maxLength": 240},
+                "content": {"type": "string", "minLength": 1, "maxLength": 8000},
+            },
+            "required": ["decision_reason", "content"],
+        }
+        raw = self._structured_completion(messages, schema, "odm_agent_final")
+        try:
+            payload = json.loads(raw)
+            return LLMDecision(
+                type="final",
+                thought=str(payload["decision_reason"]).strip(),
+                content=str(payload["content"]).strip(),
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            # 兼容不支持 JSON Schema 的端点：有正文时仍可安全作为最终回复。
+            if raw:
+                return LLMDecision(
+                    type="final",
+                    thought="基于已完成的工具 Observation 生成最终回复。",
+                    content=raw,
+                )
+            return LLMDecision(
+                type="final",
+                thought="模型未生成可用的收尾内容。",
+                content="已完成资料检索，但本次未生成可用总结，请重新提交该问题。",
+            )
 
     def replan(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]],
                previous_plan: AgentPlan, reason: str) -> AgentPlan:

@@ -389,7 +389,11 @@ class AgentLoop:
                           "available_tools": [t["name"] for t in schemas],
                           "plan_step": current_plan_step.id if current_plan_step else None})
 
-            decision = self.llm.chat(model_messages, schemas)
+            decision = (
+                self.llm.finalize(model_messages)
+                if current_plan_step is None
+                else self.llm.chat(model_messages, schemas)
+            )
 
             if cancelled():
                 return cancelled_result()

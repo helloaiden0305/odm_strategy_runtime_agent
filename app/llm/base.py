@@ -181,3 +181,7 @@ class LLMProvider(ABC):
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMDecision:
         """根据对话历史(含已执行的工具结果)与可用工具,决定下一步。"""
         raise NotImplementedError
+
+    def finalize(self, messages: list[dict[str, Any]]) -> LLMDecision:
+        """所有计划步骤完成后的最终回复；默认复用无工具对话。"""
+        return self.chat(messages, [])
