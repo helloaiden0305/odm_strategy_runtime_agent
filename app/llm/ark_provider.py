@@ -33,6 +33,10 @@ class ArkLLMProvider(LLMProvider):
             "decision_reason 是一两句审计摘要，不是完整思维链。首步 allowed_tools 必须包含 "
             "recall_troubleshooting_strategy；所有工具只能从以下名单选择："
             + ", ".join(tool_names)
+            + "。按用户意图规划：只查询历史案例或通用参考时，安排策略召回、缺陷检索和收尾即可；"
+            "此类查询命中案例后可以直接回答，不要因为缺少某台设备的版本、日志而升级专家。"
+            "只有需要给出具体排查动作时才安排 SOP；只有用户明确要求升级，或高风险问题在已查询资料后"
+            "仍无法给出安全下一步时才安排 escalate_to_expert。"
             + "。JSON Schema："
             + json.dumps(schema, ensure_ascii=False)
         )
@@ -54,6 +58,10 @@ class ArkLLMProvider(LLMProvider):
 
     def _plan_completion(self, messages: list[dict[str, Any]],
                          schema: dict[str, Any]) -> str:
+        return self._structured_completion(messages, schema, "odm_agent_plan")
+
+    def _structured_completion(self, messages: list[dict[str, Any]],
+                               schema: dict[str, Any], schema_name: str) -> str:
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": _to_openai_messages(messages),
@@ -61,7 +69,7 @@ class ArkLLMProvider(LLMProvider):
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "odm_agent_plan",
+                    "name": schema_name,
                     "strict": True,
                     "schema": schema,
                 },
@@ -77,6 +85,43 @@ class ArkLLMProvider(LLMProvider):
             kwargs.pop("response_format")
             resp = self.client.chat.completions.create(**kwargs)
         return (resp.choices[0].message.content or "").strip()
+
+    def finalize(self, messages: list[dict[str, Any]]) -> LLMDecision:
+        """以结构化最终回复收尾，避免无工具回合返回空文本。"""
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "action": {"type": "string", "enum": ["final", "replan", "handoff"]},
+                "decision_reason": {"type": "string", "minLength": 1, "maxLength": 240},
+                "content": {"type": "string", "minLength": 1, "maxLength": 8000},
+            },
+            "required": ["action", "decision_reason", "content"],
+        }
+        raw = self._structured_completion(messages, schema, "odm_agent_final")
+        try:
+            payload = json.loads(raw)
+            return LLMDecision(
+                type="final",
+                thought=str(payload["decision_reason"]).strip(),
+                content=str(payload["content"]).strip(),
+                terminal_action=str(payload["action"]).strip(),
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            # 兼容不支持 JSON Schema 的端点：有正文时仍可安全作为最终回复。
+            if raw:
+                return LLMDecision(
+                    type="final",
+                    thought="基于已完成的工具 Observation 生成最终回复。",
+                    content=raw,
+                    terminal_action="final",
+                )
+            return LLMDecision(
+                type="final",
+                thought="模型未生成可用的收尾内容。",
+                content="已完成资料检索，但本次未生成可用总结，请重新提交该问题。",
+                terminal_action="final",
+            )
 
     def replan(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]],
                previous_plan: AgentPlan, reason: str) -> AgentPlan:
