@@ -1,6 +1,6 @@
 """升级测试专家工具:生成问题工单,作为专家复盘闭环的起点。"""
 from __future__ import annotations
-from typing import Any
+from typing import Any, Callable
 
 from .base import Tool
 from .schemas import HandoffInput
@@ -20,8 +20,14 @@ class HandoffTool(Tool):
         "required": ["question"],
     }
 
-    def run(self, question: str = "", context: str = "", **kwargs: Any) -> dict[str, Any]:
+    def run(self, question: str = "", context: str = "",
+            _should_cancel: Callable[[], bool] | None = None,
+            **kwargs: Any) -> dict[str, Any]:
+        if _should_cancel and _should_cancel():
+            return self.fail("本轮策略验证已中止")
         with cursor() as cur:
+            if _should_cancel and _should_cancel():
+                return self.fail("本轮策略验证已中止")
             cur.execute(
                 "INSERT INTO tickets (question, context, status) VALUES (?, ?, 'open')",
                 (question, context),

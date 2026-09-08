@@ -8,7 +8,8 @@ from . import config
 from .db import init_db
 from .models import (ChatRequest, ChatResponse, TeachRequest,
                      TicketTeachRequest, SampleUpdate, DirectiveUpdate,
-                     SummaryUpdate, RefineRequest, RefineCommitRequest)
+                     SummaryUpdate, RefineRequest, RefineCommitRequest,
+                     CancelRunRequest)
 from .services import (chat_service, review_service, playbook_service,
                        settings_service)
 
@@ -24,13 +25,24 @@ def _startup() -> None:
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(req: ChatRequest) -> ChatResponse:
-    result = chat_service.handle_chat(req.message, req.session_id or "demo")
+    result = chat_service.handle_chat(
+        req.message,
+        req.session_id or "demo",
+        req.run_id,
+    )
     return ChatResponse(
+        run_id=result.run_id,
         reply=result.reply,
         handoff=result.handoff,
         ticket_id=result.ticket_id,
+        cancelled=result.cancelled,
         trace=result.trace,
     )
+
+
+@app.post("/api/chat/cancel")
+def cancel_chat(req: CancelRunRequest) -> dict:
+    return {"ok": True, "cancelled": chat_service.cancel_run(req.session_id, req.run_id)}
 
 
 @app.post("/api/session/reset")
@@ -59,7 +71,12 @@ def refine_commit(req: RefineCommitRequest) -> dict:
 @app.post("/api/teach")
 def teach(req: TeachRequest) -> dict:
     sample_id = playbook_service.add_sample(req.question, req.answer, req.note)
-    return {"ok": True, "sample_id": sample_id}
+    return {
+        "ok": True,
+        "sample_id": sample_id,
+        "sample_stats": playbook_service.sample_stats(),
+        "message": "已保存至策略样本库，可用于后续策略总纲归纳。",
+    }
 
 
 @app.get("/api/playbook")
@@ -68,32 +85,45 @@ def get_playbook(source: str | None = None) -> list[dict]:
     return playbook_service.list_samples(source)
 
 
+@app.get("/api/playbook/stats")
+def get_playbook_stats() -> dict:
+    return playbook_service.sample_stats()
+
+
 @app.get("/api/playbook/summary")
 def playbook_summary() -> dict:
-    """排查策略总纲:返回已保存版本(可被专家改写);首次访问自动归纳并保存。"""
-    return {"summary": chat_service.get_or_build_summary()}
+    """返回已保存总纲及当前样本归纳依据。"""
+    return chat_service.get_or_build_summary().to_dict()
 
 
 @app.put("/api/playbook/summary")
 def save_playbook_summary(req: SummaryUpdate) -> dict:
-    """测试专家手动改写总纲并保存。"""
+    """专家保存后，该版本成为保护性合并基底。"""
     return settings_service.set_summary(req.text)
 
 
 @app.post("/api/playbook/summary/regenerate")
 def regenerate_playbook_summary() -> dict:
-    """状态合并:保留专家改写,融合全部样本重新归纳。"""
-    return {"summary": chat_service.regenerate_summary()}
+    """仅对专家确认版本执行保护性追加合并。"""
+    return chat_service.regenerate_summary().to_dict()
+
+
+@app.post("/api/playbook/summary/preview")
+def preview_playbook_summary() -> dict:
+    """生成候选总纲，不写入数据库。"""
+    return chat_service.build_summary_preview().to_dict()
 
 
 @app.put("/api/playbook/{sample_id}")
 def update_playbook(sample_id: int, req: SampleUpdate) -> dict:
-    return playbook_service.update_sample(sample_id, req.question, req.answer, req.note)
+    result = playbook_service.update_sample(sample_id, req.question, req.answer, req.note)
+    return {**result, "sample_stats": playbook_service.sample_stats()}
 
 
 @app.delete("/api/playbook/{sample_id}")
 def delete_playbook(sample_id: int) -> dict:
-    return playbook_service.delete_sample(sample_id)
+    result = playbook_service.delete_sample(sample_id)
+    return {**result, "sample_stats": playbook_service.sample_stats()}
 
 
 # ---------- 工单(需要升级的问题) → 专家复盘 ----------

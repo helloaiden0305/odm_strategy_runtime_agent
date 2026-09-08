@@ -6,14 +6,22 @@ from pydantic import BaseModel
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = "demo"
+    run_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
+    run_id: str
     reply: str
     handoff: bool = False          # 本次是否升级测试专家
     ticket_id: Optional[int] = None
+    cancelled: bool = False
     # 轨迹是灵活的调试结构(每步字段随类型不同),原样透传,便于扩展
     trace: list[dict[str, Any]] = []
+
+
+class CancelRunRequest(BaseModel):
+    session_id: str = "demo"
+    run_id: str
 
 
 class AnswerRequest(BaseModel):

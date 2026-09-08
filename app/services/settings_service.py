@@ -5,6 +5,9 @@ from ..db import cursor
 
 _KEY = "business_directive"
 _SUMMARY_KEY = "playbook_summary"
+_SUMMARY_STATUS_KEY = "playbook_summary_status"
+SUMMARY_DRAFT = "draft"
+SUMMARY_EXPERT_CONFIRMED = "expert_confirmed"
 
 
 def _get(key: str, default: str = "") -> str:
@@ -63,6 +66,17 @@ def get_summary() -> str:
     return "" if _has_legacy_business_residue(value) else value
 
 
-def set_summary(text: str) -> dict:
+def get_summary_status() -> str:
+    """总纲状态；旧库中已有内容默认保护，避免升级后误覆盖手动版本。"""
+    status = _get(_SUMMARY_STATUS_KEY, "")
+    if status in {SUMMARY_DRAFT, SUMMARY_EXPERT_CONFIRMED}:
+        return status
+    return SUMMARY_EXPERT_CONFIRMED if get_summary().strip() else SUMMARY_DRAFT
+
+
+def set_summary(text: str, *, status: str = SUMMARY_EXPERT_CONFIRMED) -> dict:
+    if status not in {SUMMARY_DRAFT, SUMMARY_EXPERT_CONFIRMED}:
+        raise ValueError(f"不支持的总纲状态: {status}")
     _set(_SUMMARY_KEY, text)
-    return {"ok": True}
+    _set(_SUMMARY_STATUS_KEY, status)
+    return {"ok": True, "summary_status": status}

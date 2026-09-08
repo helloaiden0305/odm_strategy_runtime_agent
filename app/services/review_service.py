@@ -41,7 +41,12 @@ def teach_from_ticket(ticket_id: int, answer: str, note: str = "") -> dict[str, 
     sample_id = playbook_service.add_sample(ticket["question"], answer, note, source="ticket")
     with cursor() as cur:
         cur.execute("UPDATE tickets SET status='closed' WHERE id=?", (ticket_id,))
-    return {"ok": True, "sample_id": sample_id}
+    return {
+        "ok": True,
+        "sample_id": sample_id,
+        "sample_stats": playbook_service.sample_stats(),
+        "message": "已保存至策略样本库，可用于后续策略总纲归纳。",
+    }
 
 
 # ---------- 统计看板 ----------

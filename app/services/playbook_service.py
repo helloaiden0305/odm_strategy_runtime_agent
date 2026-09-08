@@ -53,6 +53,16 @@ def list_samples(source: str | None = None) -> list[dict[str, Any]]:
         return [row for row in (dict(r) for r in cur.fetchall()) if _is_odm_sample(row)]
 
 
+def sample_stats() -> dict[str, Any]:
+    """样本库的轻量统计，供样本库与总纲归纳依据共同展示。"""
+    counts = {"taught": 0, "refine": 0, "ticket": 0}
+    for item in list_samples():
+        source = item.get("source") or "taught"
+        if source in counts:
+            counts[source] += 1
+    return {"total": sum(counts.values()), "by_source": counts}
+
+
 def recall_all() -> list[dict[str, Any]]:
     """召回全部样本(供策略总纲归纳用,需要看到所有示范)。"""
     with cursor() as cur:
@@ -117,6 +127,4 @@ def delete_sample(sample_id: int) -> dict[str, Any]:
 
 
 def count() -> int:
-    with cursor() as cur:
-        cur.execute("SELECT question, answer, note FROM playbook")
-        return sum(1 for row in (dict(r) for r in cur.fetchall()) if _is_odm_sample(row))
+    return sample_stats()["total"]

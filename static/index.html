@@ -4,13 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>XZY ODM 问题排查策略自进化平台</title>
-  <link rel="stylesheet" href="/static/style.css?v=13" />
+  <link rel="stylesheet" href="/static/style.css?v=22" />
 </head>
 <body>
+  <div class="app-notice" id="app-notice" role="status" aria-live="polite"></div>
   <header class="topbar">
-    <div class="brand">XZY ODM 问题排查策略平台 <span class="tag">Agent Loop · 专家教学 · 策略进化</span></div>
+    <div class="brand">XZY ODM 问题排查策略平台 <span class="tag">Agent Loop · 策略验证 · 策略沉淀</span></div>
     <nav class="tabs">
-      <button class="tab active" data-tab="chat">策略验证</button>
+      <button class="tab active" data-tab="chat">策略验证与沉淀</button>
       <button class="tab" data-tab="samples">策略样本库</button>
       <button class="tab" data-tab="review">策略后台</button>
     </nav>
@@ -37,15 +38,20 @@
   <div class="modal-mask" id="sum-modal">
     <div class="modal">
       <div class="modal-head">
-        <span>排查策略总纲 <span class="tag-mini">可编辑 · 重新归纳时保留改写并合并新样本</span></span>
+        <span>排查策略总纲 <span class="tag-mini" id="sum-state"></span></span>
         <button class="modal-close" id="sum-close">✕</button>
       </div>
       <div class="modal-body">
+        <div class="summary-guide">
+          策略样本保留具体问题、证据和排查路径；策略总纲沉淀经专家确认的通用优先级与边界。归纳结果可在此修改，保存后才会作为 Agent 的执行基底。
+        </div>
+        <div class="summary-evidence" id="sum-evidence"></div>
+        <div class="summary-preview" id="sum-preview" hidden></div>
         <textarea class="summary-edit" id="sum-text" placeholder="加载中…"></textarea>
         <div class="settings-actions">
-          <button id="sum-save" class="btn-ok">保存改写</button>
-          <button id="sum-regen" class="btn-brain">↻ 重新归纳(合并新样本)</button>
+          <button id="sum-regen" class="btn-brain">↻ 重新归纳</button>
           <span class="settings-hint" id="sum-status"></span>
+          <button id="sum-save" class="btn-ok">保存改写</button>
         </div>
       </div>
     </div>
@@ -68,11 +74,11 @@
       <div class="chat-wrap">
         <div class="chat-col">
           <div class="mode-bar">
-            <label class="switch">
-              <input type="checkbox" id="teach-toggle" />
-              <span>专家教学模式</span>
-            </label>
-            <span class="mode-hint" id="mode-hint">策略验证:输入 ODM 问题,观察 Agent 如何调用策略、SOP、案例和升级工具。</span>
+            <div class="mode-selector" role="group" aria-label="策略工作模式">
+              <button type="button" class="mode-button active" data-mode="validate" aria-pressed="true">策略验证</button>
+              <button type="button" class="mode-button" data-mode="deposit" aria-pressed="false">策略沉淀</button>
+            </div>
+            <span class="mode-hint" id="mode-hint" aria-live="polite">策略验证:输入 ODM 问题,观察策略如何被召回,并结合 SOP、缺陷案例和专家升级完成决策。</span>
           </div>
 
           <div class="messages" id="messages"></div>
@@ -86,11 +92,11 @@
 
           <!-- 教学输入 -->
           <div class="teach-box" id="teach-box">
-            <div class="teach-title">录入专家排查经验(问题现象 + 排查路径 + 策略原因)</div>
+            <div class="teach-title">录入已确认的排查经验(问题现象 + 排查路径 + 策略原因)</div>
             <input id="t-question" type="text" placeholder="问题现象,例如:蓝牙耳机偶现连接失败" autocomplete="off" />
             <textarea id="t-answer" placeholder="建议排查路径,例如:先确认复现频率、设备型号、固件版本、耳机型号和 bt_stack 日志…"></textarea>
             <textarea id="t-note" placeholder="策略原因,例如:蓝牙问题不要直接判硬件,先补齐复现环境和协议栈证据"></textarea>
-            <button id="teach-btn">沉淀为策略样本</button>
+            <button id="teach-btn">沉淀为策略样本（专家教学）</button>
 
             <div class="taught-wrap">
               <div class="taught-title">已沉淀策略样本 (<span id="taught-count">0</span>) · 避免重复</div>
@@ -112,7 +118,12 @@
       <div class="review-col">
         <div class="review-head">
           <h3>策略样本库</h3>
-          <p>查看、编辑、删除已经沉淀的专家教学、专家纠错和工单复盘策略样本。</p>
+          <p>在这里完成工单复盘，并管理已经沉淀的专家教学、专家纠错和工单复盘策略样本。</p>
+          <p class="sample-library-status" id="sample-library-status">样本用于后续策略总纲归纳；保存修改不会自动改写已确认总纲。</p>
+        </div>
+        <div class="sample-group sample-pending">
+          <div class="sample-group-head">待沉淀的复盘工单 <span class="tag-mini">尚未保存为策略样本，不参与归纳</span> <span class="grp-count" id="cnt-pending-ticket">0</span></div>
+          <div id="pending-tickets" class="cards"></div>
         </div>
         <div class="sample-stats" aria-label="策略样本统计">
           <div class="sample-stat">
@@ -141,7 +152,7 @@
           <div id="samples-refine" class="cards"></div>
         </div>
         <div class="sample-group">
-          <div class="sample-group-head">工单复盘 <span class="tag-mini">从升级工单复盘沉淀</span> <span class="grp-count" id="cnt-ticket">0</span></div>
+          <div class="sample-group-head">已沉淀的工单复盘 <span class="tag-mini">完成复盘后保存的策略样本</span> <span class="grp-count" id="cnt-ticket">0</span></div>
           <div id="samples-ticket" class="cards"></div>
         </div>
       </div>
@@ -164,16 +175,9 @@
         </div>
       </div>
 
-      <div class="review-col">
-        <div class="review-head">
-          <h3>待复盘工单</h3>
-          <p>Agent 无法确认、证据不足或高风险问题会进入这里,等待测试专家复盘。</p>
-        </div>
-        <div id="tickets" class="cards"></div>
-      </div>
     </section>
   </main>
 
-  <script src="/static/app.js?v=13"></script>
+  <script src="/static/app.js?v=23"></script>
 </body>
 </html>

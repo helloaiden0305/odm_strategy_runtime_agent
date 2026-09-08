@@ -12,9 +12,40 @@ load_dotenv(BASE_DIR / ".env")
 
 DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "data_odm_demo.db")))
 
-# Agent Loop 边界控制
-MAX_LOOP_STEPS = 6          # 单次对话内最多循环步数,防死循环
-LOOP_TIMEOUT_SECONDS = 30   # 单次对话超时
+# Agent Run 边界控制。旧环境变量仅用于平滑升级,新配置以 Agent Run / Turn 为准。
+MAX_AGENT_TURNS = int(os.getenv("MAX_AGENT_TURNS", os.getenv("MAX_LOOP_STEPS", "6")))
+AGENT_RUN_TIMEOUT_SECONDS = float(
+    os.getenv("AGENT_RUN_TIMEOUT_SECONDS", os.getenv("LOOP_TIMEOUT_SECONDS", "90"))
+)
+MAX_PLAN_REPLANS = 1         # 单次运行最多一次重规划,避免规划空转
+MAX_PLAN_STEPS = int(os.getenv("MAX_PLAN_STEPS", "3"))
+MAX_TOOL_CALLS_PER_RUN = int(os.getenv("MAX_TOOL_CALLS_PER_RUN", "10"))
+LOOP_CYCLE_REPEAT_THRESHOLD = int(os.getenv("LOOP_CYCLE_REPEAT_THRESHOLD", "3"))
+LOOP_CYCLE_MAX_PATTERN_LENGTH = int(os.getenv("LOOP_CYCLE_MAX_PATTERN_LENGTH", "3"))
+DEMO_TOOL_CIRCUIT_BREAKER_ENABLED = os.getenv("DEMO_TOOL_CIRCUIT_BREAKER_ENABLED", "false").lower() in {
+    "1", "true", "yes", "on",
+}
+DEMO_TOOL_CIRCUIT_FAILURE_THRESHOLD = int(os.getenv("DEMO_TOOL_CIRCUIT_FAILURE_THRESHOLD", "2"))
+DEMO_TOOL_CIRCUIT_COOLDOWN_SECONDS = float(os.getenv("DEMO_TOOL_CIRCUIT_COOLDOWN_SECONDS", "30"))
+DEMO_TOOL_CIRCUIT_FAIL_TOOLS = frozenset(
+    item.strip() for item in os.getenv("DEMO_TOOL_CIRCUIT_FAIL_TOOLS", "").split(",") if item.strip()
+)
+if MAX_AGENT_TURNS < 1:
+    raise ValueError("MAX_AGENT_TURNS 必须至少为 1")
+if AGENT_RUN_TIMEOUT_SECONDS <= 0:
+    raise ValueError("AGENT_RUN_TIMEOUT_SECONDS 必须大于 0")
+if MAX_PLAN_STEPS < 3:
+    raise ValueError("MAX_PLAN_STEPS 必须至少为 3，以覆盖安全默认计划")
+if MAX_TOOL_CALLS_PER_RUN < 1:
+    raise ValueError("MAX_TOOL_CALLS_PER_RUN 必须至少为 1")
+if LOOP_CYCLE_REPEAT_THRESHOLD < 2:
+    raise ValueError("LOOP_CYCLE_REPEAT_THRESHOLD 必须至少为 2")
+if LOOP_CYCLE_MAX_PATTERN_LENGTH < 1:
+    raise ValueError("LOOP_CYCLE_MAX_PATTERN_LENGTH 必须至少为 1")
+if DEMO_TOOL_CIRCUIT_FAILURE_THRESHOLD < 1:
+    raise ValueError("DEMO_TOOL_CIRCUIT_FAILURE_THRESHOLD 必须至少为 1")
+if DEMO_TOOL_CIRCUIT_COOLDOWN_SECONDS <= 0:
+    raise ValueError("DEMO_TOOL_CIRCUIT_COOLDOWN_SECONDS 必须大于 0")
 
 # 知识库检索:命中阈值(余弦相似度),低于此值视为"未命中"
 KB_HIT_THRESHOLD = 0.45
@@ -31,6 +62,8 @@ RESET_DEMO_RUNTIME_ON_START = os.getenv("RESET_DEMO_RUNTIME_ON_START", "true").l
 
 # 选用的 LLM 提供方:mock(离线桩)| ark(真实豆包/火山引擎 ARK)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "mock")
+# 仅用于本机验收运行中断逻辑;默认 0,不影响常规 Demo。
+MOCK_LLM_DELAY_SECONDS = float(os.getenv("MOCK_LLM_DELAY_SECONDS", "0"))
 
 # 豆包(火山引擎 ARK)配置,OpenAI 兼容接口
 ARK_API_KEY = os.getenv("ARK_API_KEY", "")

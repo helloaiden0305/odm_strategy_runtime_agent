@@ -1,7 +1,10 @@
 """策略验证服务:维护会话上下文、驱动 Agent Loop、记录指标。"""
 from __future__ import annotations
 import re
+from dataclasses import dataclass
+from threading import RLock
 from typing import Any
+from uuid import uuid4
 
 from ..agent.loop import AgentLoop, LoopResult
 from ..llm.mock_provider import MockLLMProvider
@@ -12,6 +15,16 @@ from .. import config
 # 简单的进程内会话存储(演示用;生产可换 Redis/DB)
 _SESSIONS: dict[str, list[dict[str, Any]]] = {}
 _SESSION_CONTEXT: dict[str, dict[str, Any]] = {}
+_RUN_LOCK = RLock()
+
+
+@dataclass
+class _RunState:
+    run_id: str
+    cancelled: bool = False
+
+
+_ACTIVE_RUNS: dict[str, _RunState] = {}
 _HANDOFF_TEXT_RE = re.compile(r"(升级测试专家|升级专家|判断不了|看不准|人工判断|转专家|专家)")
 _BUSINESS_SIGNAL_RE = re.compile(
     r"(蓝牙|刷机|OTA|ota|ANR|anr|日志|logcat|bt_stack|traces|卡死|压测|固件|连接|失败|失败码)"
@@ -57,11 +70,12 @@ _BASE_PROMPT = (
     "工作流程(务必遵守):\n"
     "1. 回答任何测试/研发问题前,【必须先调用 recall_troubleshooting_strategy】召回专家排查样本。\n"
     "2. 先判断问题类型,例如蓝牙、刷机、OTA、ANR、稳定性、兼容性、日志分析或量产问题。\n"
-    "3. 不要直接套用某条历史案例给结论;先补齐复现条件、设备型号、固件版本、操作路径、日志和影响范围。\n"
-    "4. 涉及流程、日志采集、刷机、OTA、ANR、稳定性等事实类排查动作时,必须调用 test_sop_search 核对。\n"
+    "3. 针对具体故障定位,不要直接套用某条历史案例给结论;先补齐复现条件、设备型号、固件版本、操作路径、日志和影响范围。\n"
+    "4. 需要给出流程、日志采集、刷机、OTA、ANR、稳定性等具体排查动作时,必须调用 test_sop_search 核对。\n"
     "5. 涉及历史缺陷、类似问题、量产/试产问题或根因参考时,必须调用 defect_case_search 核对。\n"
     "6. 事实类信息必须来自测试 SOP 或历史缺陷工具,绝不可编造根因;查不到时说明证据不足。\n"
-    "7. 遇到证据不足、风险较高、疑似底层协议/固件/硬件问题,或无法确认原因时,调用 escalate_to_expert。\n"
+    "7. 用户明确要求升级，或高风险问题在已查询可用资料后仍无法给出安全下一步时，调用 escalate_to_expert；"
+    "仅查询历史案例、SOP 或通用参考时，不因缺少某台设备的版本信息而自动升级。\n"
     "8. 输出结构尽量包含:问题判断、需要补充的信息、建议排查步骤、参考案例、是否建议升级。\n\n"
     "蓝牙标准策略样例:\n"
     "遇到蓝牙连接失败,不要直接判断是硬件问题。先确认问题是否稳定复现;确认设备型号、固件版本、"
@@ -71,28 +85,102 @@ _BASE_PROMPT = (
 )
 
 
-def handle_chat(message: str, session_id: str = "demo") -> LoopResult:
+def _clear_session_context_locked(session_id: str) -> None:
+    _SESSIONS.pop(session_id, None)
+    _SESSION_CONTEXT.pop(session_id, None)
+
+
+def _start_run(session_id: str, run_id: str) -> None:
+    with _RUN_LOCK:
+        previous = _ACTIVE_RUNS.get(session_id)
+        if previous:
+            previous.cancelled = True
+            _clear_session_context_locked(session_id)
+        _ACTIVE_RUNS[session_id] = _RunState(run_id=run_id)
+
+
+def _is_run_cancelled(session_id: str, run_id: str) -> bool:
+    with _RUN_LOCK:
+        state = _ACTIVE_RUNS.get(session_id)
+        return state is None or state.run_id != run_id or state.cancelled
+
+
+def cancel_run(session_id: str = "demo", run_id: str | None = None) -> bool:
+    """取消当前运行并清空该运行的会话上下文。"""
+    with _RUN_LOCK:
+        state = _ACTIVE_RUNS.get(session_id)
+        if state is None:
+            if run_id is None:
+                _clear_session_context_locked(session_id)
+            return False
+        if run_id is not None and state.run_id != run_id:
+            return False
+        state.cancelled = True
+        _clear_session_context_locked(session_id)
+        return True
+
+
+def _rollback_cancelled_ticket(ticket_id: int | None) -> None:
+    if ticket_id is None:
+        return
+    with cursor() as cur:
+        cur.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+
+
+def _finish_cancelled_run(session_id: str, run_id: str, ticket_id: int | None) -> None:
+    _rollback_cancelled_ticket(ticket_id)
+    with _RUN_LOCK:
+        state = _ACTIVE_RUNS.get(session_id)
+        if state and state.run_id == run_id:
+            _clear_session_context_locked(session_id)
+            _ACTIVE_RUNS.pop(session_id, None)
+
+
+def _persist_completed_run(session_id: str, run_id: str, message: str,
+                           result: LoopResult) -> bool:
+    """仅让仍处于活跃状态的运行写入会话和指标。"""
+    with _RUN_LOCK:
+        state = _ACTIVE_RUNS.get(session_id)
+        if state is None or state.run_id != run_id or state.cancelled:
+            return False
+
+        _SESSIONS[session_id] = [
+            m for m in result.session_messages
+            if m.get("role") == "user"
+            or (m.get("role") == "assistant" and not m.get("tool_calls"))
+        ]
+        _log_metrics(session_id, message, result)
+        _remember_business_context(session_id, message, result)
+        _ACTIVE_RUNS.pop(session_id, None)
+        return True
+
+
+def handle_chat(message: str, session_id: str = "demo",
+                run_id: str | None = None) -> LoopResult:
+    run_id = run_id or uuid4().hex
+    _start_run(session_id, run_id)
+
     # system 每轮由 Loop 注入最新的 effective_system_prompt(总纲/业务设定实时生效),
     # 会话存储只保留用户消息和最终回复。
-    history = _SESSIONS.get(session_id, [])
-
-    handoff_context = _build_handoff_context(message, session_id)
+    with _RUN_LOCK:
+        history = list(_SESSIONS.get(session_id, []))
+        handoff_context = _build_handoff_context(message, session_id)
     result = _LOOP.run(
         message,
         history=history,
         system=effective_system_prompt(),
         handoff_context=handoff_context,
+        should_cancel=lambda: _is_run_cancelled(session_id, run_id),
+        run_id=run_id,
     )
 
-    # 只把用户与最终回复(不含中间的 tool_calls / tool 消息)落进会话上下文
-    _SESSIONS[session_id] = [
-        m for m in result.session_messages
-        if m.get("role") == "user"
-        or (m.get("role") == "assistant" and not m.get("tool_calls"))
-    ]
+    if result.cancelled or _is_run_cancelled(session_id, run_id):
+        _finish_cancelled_run(session_id, run_id, result.ticket_id)
+        return LoopResult(reply="", trace=[], cancelled=True, run_id=run_id)
 
-    _log_metrics(session_id, message, result)
-    _remember_business_context(session_id, message, result)
+    if not _persist_completed_run(session_id, run_id, message, result):
+        _finish_cancelled_run(session_id, run_id, result.ticket_id)
+        return LoopResult(reply="", trace=[], cancelled=True, run_id=run_id)
     return result
 
 
@@ -184,8 +272,7 @@ def _log_metrics(session_id: str, question: str, result: LoopResult) -> None:
 
 
 def reset_session(session_id: str = "demo") -> None:
-    _SESSIONS.pop(session_id, None)
-    _SESSION_CONTEXT.pop(session_id, None)
+    cancel_run(session_id)
 
 
 def refine_reply(question: str, reply: str, feedback: str, session_id: str = "demo") -> str:
@@ -217,14 +304,57 @@ def commit_refinement(question: str, answer: str, feedback: str) -> dict:
     from . import playbook_service
     note = "(实测纠偏)" + feedback if feedback else "(实测纠偏)"
     sample_id = playbook_service.add_sample(question, answer, note, source="refine")
-    summary = regenerate_summary()
-    return {"ok": True, "sample_id": sample_id, "summary": summary}
+    merged = regenerate_summary()
+    return {
+        "ok": True,
+        "sample_id": sample_id,
+        **merged.to_dict(),
+        "sample_stats": playbook_service.sample_stats(),
+        "message": "已保存至策略样本库；专家纠错沿用现有自动合并流程。",
+    }
 
 
 _EMPTY_SUMMARY = "策略样本库还是空的。去『专家教学模式』录入几条,我就能帮你归纳排查策略总纲了。"
 
 
-def induce_playbook(existing: str = "") -> str:
+@dataclass(frozen=True)
+class SummaryMergeResult:
+    summary: str
+    merge_status: str
+    summary_status: str
+    message: str = ""
+    sample_stats: dict[str, Any] | None = None
+    pending_save: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "summary": self.summary,
+            "merge_status": self.merge_status,
+            "summary_status": self.summary_status,
+            "message": self.message,
+            "sample_stats": self.sample_stats or {"total": 0, "by_source": {}},
+            "pending_save": self.pending_save,
+        }
+
+
+def _normalize_summary(text: str) -> str:
+    return (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def validate_summary_merge(existing: str, candidate: str) -> tuple[bool, str]:
+    """只校验专家确认原文未丢失，不尝试判断新增规则的语义。"""
+    base = _normalize_summary(existing)
+    merged = _normalize_summary(candidate)
+    if not base:
+        return False, "缺少专家确认保护基底。"
+    if not merged:
+        return False, "归纳结果为空。"
+    if not merged.startswith(base):
+        return False, "归纳结果未以专家确认原文开头。"
+    return True, ""
+
+
+def induce_playbook(existing: str = "", retry_reason: str = "") -> str:
     """从策略样本归纳『排查策略总纲』。
 
     existing 非空时执行【状态合并】:完整保留专家已改写的总纲规则,
@@ -239,14 +369,20 @@ def induce_playbook(existing: str = "") -> str:
         for i, s in enumerate(samples)
     )
     if existing.strip():
+        retry_hint = (
+            "\n\n【上次输出未通过保护校验】\n" + retry_reason
+            + "请严格先逐字复制专家确认保护基底，再决定是否在末尾追加补充策略。"
+            if retry_reason else ""
+        )
         messages = [
             {"role": "system", "content": (
-                "你是资深 ODM 测试策略专家。专家已经有一份【现有排查策略总纲】,其中可能有手动修订或补充的规则,"
-                "这些必须尊重并原样保留。现在给你一批策略样本。请在【完整保留现有总纲里的规则和措辞倾向】"
-                "的前提下,把样本里体现出、但现有总纲还没覆盖的新排查策略补充进去;若样本与现有总纲有冲突,"
-                "一律以现有总纲为准。输出更新后的完整总纲,条目化、简洁;不要删除已有规则,不要复述原始样本。")},
+                "你是资深 ODM 测试策略专家。下面的【专家确认保护基底】必须逐字原样保留。"
+                "你的输出必须先完整复制该基底，不得删除、改写、重排或插入内容；"
+                "仅可在基底末尾追加“补充策略”小节。补充内容只能来自基底未覆盖的样本共性；"
+                "与基底冲突的样本不应采纳。没有可靠新增策略时，只输出基底。"
+                "不要输出解释、前缀、致谢或原始样本。" + retry_hint)},
             {"role": "user", "content": (
-                "【现有排查策略总纲(专家已改写,须保留)】:\n" + existing.strip()
+                "【专家确认保护基底(必须原样保留)】:\n" + existing.strip()
                 + "\n\n【全部策略样本】:\n" + body)},
         ]
     else:
@@ -262,22 +398,123 @@ def induce_playbook(existing: str = "") -> str:
     return (decision.content or "").strip() or "(暂未归纳出内容)"
 
 
-def get_or_build_summary() -> str:
-    """返回已保存的总纲;若从未生成过,则首次自动归纳并存下来(保留后续编辑)。"""
-    from . import settings_service
+def get_or_build_summary() -> SummaryMergeResult:
+    """返回已保存总纲；未确认时由预览接口显式生成候选。"""
+    from . import playbook_service, settings_service
+    stats = playbook_service.sample_stats()
     saved = settings_service.get_summary()
     if saved.strip():
-        return saved
-    fresh = induce_playbook()
-    if fresh and fresh != _EMPTY_SUMMARY:
-        settings_service.set_summary(fresh)
-    return fresh
+        return SummaryMergeResult(
+            summary=saved,
+            merge_status="existing",
+            summary_status=settings_service.get_summary_status(),
+            sample_stats=stats,
+        )
+    return SummaryMergeResult(
+        summary="",
+        merge_status="empty",
+        summary_status=settings_service.SUMMARY_DRAFT,
+        message="尚未保存策略总纲。请先重新归纳生成候选版本。",
+        sample_stats=stats,
+    )
 
 
-def regenerate_summary() -> str:
-    """状态合并:以专家改写后的现有总纲为基底,融合全部样本,重新归纳并保存。"""
+def build_summary_preview() -> SummaryMergeResult:
+    """根据当前样本生成候选总纲；候选只留在响应中，不写入设置表。"""
+    from . import playbook_service, settings_service
+    stats = playbook_service.sample_stats()
+    existing = settings_service.get_summary()
+    status = settings_service.get_summary_status()
+
+    if not stats["total"]:
+        return SummaryMergeResult(
+            summary=_EMPTY_SUMMARY,
+            merge_status="preview_empty",
+            summary_status=status,
+            message="暂无策略样本，无法生成可保存的归纳候选。",
+            sample_stats=stats,
+            pending_save=False,
+        )
+
+    if not existing.strip() or status != settings_service.SUMMARY_EXPERT_CONFIRMED:
+        return SummaryMergeResult(
+            summary=induce_playbook(),
+            merge_status="preview_generated",
+            summary_status=status,
+            message="已基于当前策略样本生成候选总纲，尚未生效。",
+            sample_stats=stats,
+            pending_save=True,
+        )
+
+    candidate = induce_playbook(existing=existing)
+    valid, reason = validate_summary_merge(existing, candidate)
+    if valid:
+        return SummaryMergeResult(
+            summary=candidate,
+            merge_status="preview_merged",
+            summary_status=status,
+            message="已基于当前策略样本生成候选总纲，尚未生效。",
+            sample_stats=stats,
+            pending_save=True,
+        )
+
+    retried = induce_playbook(existing=existing, retry_reason=reason)
+    valid, _ = validate_summary_merge(existing, retried)
+    if valid:
+        return SummaryMergeResult(
+            summary=retried,
+            merge_status="preview_merged_after_retry",
+            summary_status=status,
+            message="首次预览未通过保护校验，重试后已生成待确认候选。",
+            sample_stats=stats,
+            pending_save=True,
+        )
+    return SummaryMergeResult(
+        summary=existing,
+        merge_status="protected_existing",
+        summary_status=status,
+        message="本次归纳未安全合并，已保留专家确认版本。",
+        sample_stats=stats,
+        pending_save=False,
+    )
+
+
+def regenerate_summary() -> SummaryMergeResult:
+    """专家确认版本采用保护性追加合并；未确认内容仅更新草稿。"""
     from . import settings_service
-    merged = induce_playbook(existing=settings_service.get_summary())
-    if merged and merged != _EMPTY_SUMMARY:
-        settings_service.set_summary(merged)
-    return merged
+    existing = settings_service.get_summary()
+    status = settings_service.get_summary_status()
+    if not existing.strip() or status != settings_service.SUMMARY_EXPERT_CONFIRMED:
+        fresh = induce_playbook()
+        if fresh and fresh != _EMPTY_SUMMARY:
+            settings_service.set_summary(fresh, status=settings_service.SUMMARY_DRAFT)
+        return SummaryMergeResult(
+            summary=fresh,
+            merge_status="draft_generated",
+            summary_status=settings_service.SUMMARY_DRAFT,
+            message="当前没有专家确认基底，已更新 AI 草稿。",
+        )
+
+    candidate = induce_playbook(existing=existing)
+    valid, reason = validate_summary_merge(existing, candidate)
+    if valid:
+        settings_service.set_summary(candidate, status=settings_service.SUMMARY_EXPERT_CONFIRMED)
+        message = "已合并新增策略。" if _normalize_summary(candidate) != _normalize_summary(existing) else "已保留专家确认版本；未发现可靠新增策略。"
+        return SummaryMergeResult(candidate, "merged", settings_service.SUMMARY_EXPERT_CONFIRMED, message)
+
+    retried = induce_playbook(existing=existing, retry_reason=reason)
+    valid, retry_reason = validate_summary_merge(existing, retried)
+    if valid:
+        settings_service.set_summary(retried, status=settings_service.SUMMARY_EXPERT_CONFIRMED)
+        return SummaryMergeResult(
+            retried,
+            "merged_after_retry",
+            settings_service.SUMMARY_EXPERT_CONFIRMED,
+            "首次归纳未通过保护校验，重试后已安全合并。",
+        )
+    return SummaryMergeResult(
+        existing,
+        "protected_existing",
+        settings_service.SUMMARY_EXPERT_CONFIRMED,
+        "本次归纳未安全合并，已保留专家确认版本。",
+    )
