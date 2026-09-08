@@ -143,7 +143,7 @@ class AgentLoop:
         """重规划只改变尚未完成部分，已结束步骤与 Observation 语义保持稳定。"""
         previous_states = {
             item.id: item.status for item in previous.steps
-            if item.status in {"completed", "blocked", "skipped"}
+            if item.status in {"completed", "skipped"}
         }
         for item in candidate.steps:
             if item.id in previous_states:
@@ -648,8 +648,13 @@ class AgentLoop:
                 if call.name == "recall_troubleshooting_strategy" and isinstance(result, dict):
                     kb_hit = kb_hit or bool(result.get("count"))
 
-                if current_plan_step and plan_allowed:
-                    if result_ok and not (cycle_decision and not cycle_decision.information_gain):
+                if current_plan_step:
+                    if not plan_allowed:
+                        self._set_plan_state(
+                            trace, turn, current_plan_step, "blocked",
+                            "模型请求的工具不在当前计划允许范围，等待重规划。",
+                        )
+                    elif result_ok and not (cycle_decision and not cycle_decision.information_gain):
                         self._set_plan_state(
                             trace, turn, current_plan_step, "completed",
                             "已获得当前步骤的工具 Observation。",
@@ -661,6 +666,18 @@ class AgentLoop:
                             if cycle_decision and not cycle_decision.information_gain
                             else "当前步骤的工具调用未能产生可用 Observation。",
                         )
+
+                # 工单写入是有副作用的终止动作。成功后由代码立即收尾，
+                # 不再让模型进入无工具回合，避免重复创建同一问题的工单。
+                if call.name == "escalate_to_expert" and result_ok and ticket_id is not None:
+                    reply = "已生成问题工单并升级测试专家，请补充复现环境、版本号和关键日志，专家会继续跟进。"
+                    trace.append({"step": turn, "type": "final",
+                                  "plan_step": current_plan_step.id if current_plan_step else None,
+                                  "handoff": True, "content": reply})
+                    messages.append({"role": "assistant", "content": reply})
+                    trace.append({"step": turn, "type": "run_lifecycle", "status": "completed",
+                                  "content": "专家升级已完成，Agent Run 结束。"})
+                    return build_result()
         else:
             # while 正常结束(达到最大 Agent Turn 仍未 final)
             current_plan_step = self._next_plan_step(plan)

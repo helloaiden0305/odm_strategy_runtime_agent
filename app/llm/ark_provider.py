@@ -33,6 +33,10 @@ class ArkLLMProvider(LLMProvider):
             "decision_reason 是一两句审计摘要，不是完整思维链。首步 allowed_tools 必须包含 "
             "recall_troubleshooting_strategy；所有工具只能从以下名单选择："
             + ", ".join(tool_names)
+            + "。按用户意图规划：只查询历史案例或通用参考时，安排策略召回、缺陷检索和收尾即可；"
+            "此类查询命中案例后可以直接回答，不要因为缺少某台设备的版本、日志而升级专家。"
+            "只有需要给出具体排查动作时才安排 SOP；只有用户明确要求升级，或高风险问题在已查询资料后"
+            "仍无法给出安全下一步时才安排 escalate_to_expert。"
             + "。JSON Schema："
             + json.dumps(schema, ensure_ascii=False)
         )
