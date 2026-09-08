@@ -92,10 +92,11 @@ class ArkLLMProvider(LLMProvider):
             "type": "object",
             "additionalProperties": False,
             "properties": {
+                "action": {"type": "string", "enum": ["final", "replan", "handoff"]},
                 "decision_reason": {"type": "string", "minLength": 1, "maxLength": 240},
                 "content": {"type": "string", "minLength": 1, "maxLength": 8000},
             },
-            "required": ["decision_reason", "content"],
+            "required": ["action", "decision_reason", "content"],
         }
         raw = self._structured_completion(messages, schema, "odm_agent_final")
         try:
@@ -104,6 +105,7 @@ class ArkLLMProvider(LLMProvider):
                 type="final",
                 thought=str(payload["decision_reason"]).strip(),
                 content=str(payload["content"]).strip(),
+                terminal_action=str(payload["action"]).strip(),
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             # 兼容不支持 JSON Schema 的端点：有正文时仍可安全作为最终回复。
@@ -112,11 +114,13 @@ class ArkLLMProvider(LLMProvider):
                     type="final",
                     thought="基于已完成的工具 Observation 生成最终回复。",
                     content=raw,
+                    terminal_action="final",
                 )
             return LLMDecision(
                 type="final",
                 thought="模型未生成可用的收尾内容。",
                 content="已完成资料检索，但本次未生成可用总结，请重新提交该问题。",
+                terminal_action="final",
             )
 
     def replan(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]],

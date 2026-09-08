@@ -43,9 +43,11 @@ class _FakeTool:
 
 
 class _ScriptedProvider(LLMProvider):
-    def __init__(self, plan: AgentPlan, decisions: list[LLMDecision]) -> None:
+    def __init__(self, plan: AgentPlan, decisions: list[LLMDecision],
+                 replans: list[AgentPlan] | None = None) -> None:
         self._plan = plan
         self._decisions = list(decisions)
+        self._replans = list(replans or [])
         self.chat_calls = 0
         self.finalize_calls = 0
 
@@ -59,6 +61,10 @@ class _ScriptedProvider(LLMProvider):
     def finalize(self, messages: list[dict]) -> LLMDecision:
         self.finalize_calls += 1
         return self.chat(messages, [])
+
+    def replan(self, messages: list[dict], tools: list[dict],
+               previous_plan: AgentPlan, reason: str) -> AgentPlan:
+        return self._replans.pop(0) if self._replans else self._plan
 
 
 def _tool_call(name: str, payload: dict) -> LLMDecision:
@@ -120,6 +126,63 @@ def _loop(provider: _ScriptedProvider) -> tuple[AgentLoop, dict[str, _FakeTool]]
 
 
 class AgentLoopHandoffTest(unittest.TestCase):
+    def test_completed_plan_can_replan_when_finalizer_requests_it(self):
+        initial = _plan(with_case=True)
+        initial.steps.pop()
+        provider = _ScriptedProvider(
+            initial,
+            [
+                _tool_call("recall_troubleshooting_strategy", {"query": "Bluetooth"}),
+                _tool_call("defect_case_search", {"query": "Bluetooth"}),
+                LLMDecision(
+                    type="final",
+                    thought="The case result needs one more conclusion step.",
+                    content="需要重新规划后续判断。",
+                    terminal_action="replan",
+                ),
+                LLMDecision(
+                    type="final",
+                    thought="The replanned conclusion step is complete.",
+                    content="已根据历史案例给出下一步建议。",
+                ),
+            ],
+            replans=[_plan(with_case=True)],
+        )
+        loop, tools = _loop(provider)
+
+        result = loop.run("Find a related Bluetooth case.")
+
+        self.assertFalse(result.handoff)
+        self.assertEqual(tools["escalate_to_expert"].calls, 0)
+        self.assertTrue(any(event["type"] == "terminal_action" and event["action"] == "replan"
+                            for event in result.trace))
+        self.assertTrue(any(event["type"] == "replan" for event in result.trace))
+
+    def test_completed_plan_can_handoff_when_finalizer_requests_it(self):
+        plan = _plan(with_case=True)
+        plan.steps.pop()
+        provider = _ScriptedProvider(
+            plan,
+            [
+                _tool_call("recall_troubleshooting_strategy", {"query": "Bluetooth"}),
+                _tool_call("defect_case_search", {"query": "Bluetooth"}),
+                LLMDecision(
+                    type="final",
+                    thought="The evidence indicates a high-risk protocol issue.",
+                    content="需要专家确认协议栈风险。",
+                    terminal_action="handoff",
+                ),
+            ],
+        )
+        loop, tools = _loop(provider)
+
+        result = loop.run("Find a related Bluetooth case.")
+
+        self.assertTrue(result.handoff)
+        self.assertEqual(tools["escalate_to_expert"].calls, 1)
+        self.assertTrue(any(event["type"] == "terminal_action" and event["action"] == "handoff"
+                            for event in result.trace))
+
     def test_all_completed_steps_use_dedicated_finalizer(self):
         plan = _plan(with_case=True)
         plan.steps.pop()
@@ -154,8 +217,8 @@ class AgentLoopHandoffTest(unittest.TestCase):
         )
 
         self.assertIn("【收尾阶段】", messages[0]["content"])
-        self.assertIn("不得调用工具", messages[0]["content"])
-        self.assertIn("非空的最终回复", messages[0]["content"])
+        self.assertIn("不得直接调用工具", messages[0]["content"])
+        self.assertIn("final；需要新证据则 replan", messages[0]["content"])
 
     def test_mock_history_lookup_finishes_after_case_result(self):
         provider = MockLLMProvider()

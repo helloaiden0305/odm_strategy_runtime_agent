@@ -38,6 +38,7 @@ class LLMDecision:
     thought: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     content: Optional[str] = None
+    terminal_action: str | None = None
 
     def validate_contract(self) -> "LLMDecision":
         """校验 Provider 归一化后的 Turn 决策，拒绝未知动作和不完整输出。"""
@@ -50,6 +51,7 @@ class LLMDecision:
                     for call in self.tool_calls
                 ],
                 "content": self.content,
+                "terminal_action": self.terminal_action,
             })
         except ValidationError as exc:
             raise ValueError("Turn 决策结构不符合约定") from exc
@@ -59,6 +61,7 @@ class LLMDecision:
             tool_calls=[ToolCall(id=call.id, name=call.name, input=call.input)
                         for call in validated.tool_calls],
             content=validated.content,
+            terminal_action=validated.terminal_action,
         )
 
 
@@ -84,6 +87,7 @@ class AgentDecision(_PlannerSchema):
     decision_reason: str = Field(..., min_length=1, max_length=240)
     tool_calls: list[DecisionToolCall] = Field(default_factory=list, max_length=4)
     content: str | None = Field(default=None, max_length=8000)
+    terminal_action: Literal["final", "replan", "handoff"] | None = None
 
     @model_validator(mode="after")
     def validate_action_shape(self) -> "AgentDecision":
@@ -94,6 +98,8 @@ class AgentDecision(_PlannerSchema):
                 raise ValueError("final 决策不能携带工具调用")
             if not (self.content or "").strip():
                 raise ValueError("final 决策必须包含回复内容")
+        elif self.terminal_action is not None:
+            raise ValueError("terminal_action 只能用于 final 决策")
         return self
 
     @classmethod
