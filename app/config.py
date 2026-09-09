@@ -13,13 +13,13 @@ load_dotenv(BASE_DIR / ".env")
 DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "data_odm_demo.db")))
 
 # Agent Run 边界控制。旧环境变量仅用于平滑升级,新配置以 Agent Run / Turn 为准。
-MAX_AGENT_TURNS = int(os.getenv("MAX_AGENT_TURNS", os.getenv("MAX_LOOP_STEPS", "6")))
+MAX_AGENT_TURNS = int(os.getenv("MAX_AGENT_TURNS", os.getenv("MAX_LOOP_STEPS", "15")))
 AGENT_RUN_TIMEOUT_SECONDS = float(
-    os.getenv("AGENT_RUN_TIMEOUT_SECONDS", os.getenv("LOOP_TIMEOUT_SECONDS", "90"))
+    os.getenv("AGENT_RUN_TIMEOUT_SECONDS", os.getenv("LOOP_TIMEOUT_SECONDS", "120"))
 )
 MAX_PLAN_REPLANS = 1         # 单次运行最多一次重规划,避免规划空转
 MAX_PLAN_STEPS = int(os.getenv("MAX_PLAN_STEPS", "3"))
-MAX_TOOL_CALLS_PER_RUN = int(os.getenv("MAX_TOOL_CALLS_PER_RUN", "10"))
+MAX_TOOL_CALLS_PER_RUN = int(os.getenv("MAX_TOOL_CALLS_PER_RUN", "15"))
 LOOP_CYCLE_REPEAT_THRESHOLD = int(os.getenv("LOOP_CYCLE_REPEAT_THRESHOLD", "3"))
 LOOP_CYCLE_MAX_PATTERN_LENGTH = int(os.getenv("LOOP_CYCLE_MAX_PATTERN_LENGTH", "3"))
 DEMO_TOOL_CIRCUIT_BREAKER_ENABLED = os.getenv("DEMO_TOOL_CIRCUIT_BREAKER_ENABLED", "false").lower() in {
